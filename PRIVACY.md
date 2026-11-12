@@ -1,6 +1,10 @@
 # Privacy · 隐私 · プライバシー
 
-Version 0.1.1 preview · 2026-11-12
+Version 0.1.2 preview · 2026-11-12
+
+**Popup drafts:** management form drafts and navigation are retained in extension `storage.session` for the current browser session. Drafts stay in this browser and are not published. Connection outcomes are retained in local extension state so closing the popup does not hide a failed attempt.
+
+**Script recovery:** `scripting` is used only to load the packaged content script and stylesheet into the selected X tab when its identity-message receiver is missing. It uses the existing X host permissions, does not read cookies, and does not retry block writes. The extension reads the Profile navigation and account avatar identifiers to verify the selected account.
 
 ## English
 

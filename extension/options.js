@@ -1,6 +1,9 @@
+import { mountDashboard } from './lib/dashboard-view.js';
 import { parseImport } from './lib/core.js';
 import { t, setLanguage, translatePage, dateText } from './lib/i18n.js';
 
+mountDashboard();
+const compact = document.body.classList.contains('popup-dashboard');
 const $ = (id) => document.getElementById(id);
 const PAGE_SIZE = 50;
 let state = { settings: {}, entries: [], subscriptions: [], allowlist: [], queue: [], logs: [], capture: { entries: [] } };
@@ -9,6 +12,57 @@ let selected = new Set();
 let currentPanel = 'overview';
 let editingHandle = '';
 let toastTimer;
+let restoringDraft = true;
+let intervalDirty = false;
+let draftWarningShown = false;
+let localConnectionError = '';
+let bindingAccount = false;
+let scrollSaveTimer;
+const draftKey = 'gabPopupDraftV1';
+const panelScroll = {};
+const busyActions = new Set();
+const draftFields = ['import-text', 'search', 'status-filter', 'export-kind', 'sub-name', 'sub-url', 'allow-handle', 'interval'];
+const requestedPanel = location.hash.slice(1);
+if (compact) document.querySelector('.app-shell').inert = true;
+
+function draftSnapshot() {
+  const fields = Object.fromEntries(draftFields.map((id) => [id, $(id).value]));
+  // A subscription never needs credentials; do not retain credential/query URLs in drafts.
+  if (/[?@#]/.test(fields['sub-url'])) fields['sub-url'] = '';
+  return {version: 1, panel: currentPanel, page, fields, selected: [...selected], panelScroll,
+    importOpen: !$('import-card').hidden, fileName: $('file-name').textContent,
+    autoScroll: $('auto-scroll').checked, intervalDirty,
+    editor: $('entry-dialog').open ? {handle: editingHandle, id: $('edit-id').value, reason: $('edit-reason').value, evidence: $('edit-evidence').value} : null};
+}
+function saveDraft() {
+  if (!compact || restoringDraft || !globalThis.chrome?.storage?.session) return;
+  void chrome.storage.session.set({[draftKey]: draftSnapshot()}).catch(() => {
+    if (!draftWarningShown) { draftWarningShown = true; toast(t('draftSaveError'), true); }
+  });
+}
+async function readDraft() {
+  if (!compact || !globalThis.chrome?.storage?.session) return null;
+  try { return (await chrome.storage.session.get(draftKey))[draftKey]; }
+  catch { draftWarningShown = true; return null; }
+}
+function restoreDraft(draft) {
+  if (!compact || !draft || draft.version !== 1) return;
+  for (const id of draftFields) if (typeof draft.fields?.[id] === 'string') $(id).value = draft.fields[id];
+  intervalDirty = !!draft.intervalDirty;
+  $('import-card').hidden = !draft.importOpen;
+  $('file-name').textContent = typeof draft.fileName === 'string' ? draft.fileName : '';
+  $('auto-scroll').checked = draft.autoScroll !== false;
+  selected = new Set(Array.isArray(draft.selected) ? draft.selected.filter((handle) => typeof handle === 'string') : []);
+  page = Number.isInteger(draft.page) && draft.page >= 0 ? draft.page : 0;
+  for (const [name, value] of Object.entries(draft.panelScroll || {})) if (Number.isFinite(value) && value >= 0) panelScroll[name] = value;
+  switchPanel(requestedPanel || draft.panel);
+  renderLibrary();
+  if (draft.editor && localEntries().some((entry) => entry.handle === draft.editor.handle)) {
+    editEntry(draft.editor.handle);
+    for (const field of ['id', 'reason', 'evidence']) if (typeof draft.editor[field] === 'string') $('edit-' + field).value = draft.editor[field];
+  }
+}
+
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -32,19 +86,24 @@ async function request(type, payload = {}) {
   return result;
 }
 async function action(task, button) {
-  if (button?.disabled) return;
-  if (button) button.disabled = true;
+  const key = button?.id || button?.form?.id;
+  if (button?.disabled || (key && busyActions.has(key))) return;
+  if (key) busyActions.add(key);
+  if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
   try { return await task(); }
   catch (error) { toast(error?.message || String(error), true); renderSettings(); }
-  finally { if (button) { button.disabled = false; render(); } }
+  finally { if (key) busyActions.delete(key); if (button) { button.disabled = false; button.removeAttribute('aria-busy'); render(); } saveDraft(); }
 }
 function onClick(id, task) { $(id).addEventListener('click', (event) => action(() => task(event), event.currentTarget)); }
 function switchPanel(name) {
   if (!['overview', 'library', 'subscriptions', 'activity', 'settings'].includes(name)) name = 'overview';
+  if (compact && !restoringDraft) panelScroll[currentPanel] = document.querySelector('.main').scrollTop;
   currentPanel = name;
   document.querySelectorAll('.panel').forEach((node) => { node.hidden = node.id !== `panel-${name}`; });
   document.querySelectorAll('[data-panel]').forEach((node) => { node.classList.toggle('active', node.dataset.panel === name); node.setAttribute('aria-current', node.dataset.panel === name ? 'page' : 'false'); });
   history.replaceState(null, '', `#${name}`);
+  if (compact) document.querySelector('.main').scrollTop = panelScroll[name] || 0;
+  saveDraft();
 }
 function localEntries() { return (state.entries || []).filter((entry) => entry.source === 'local'); }
 function allowedSet() { return new Set(state.allowlist || []); }
@@ -65,13 +124,20 @@ function render() {
   setLanguage(state.settings?.language || 'en');
   translatePage();
   $('language').value = state.settings?.language || 'en';
-  renderOverview(); renderLibrary(); renderSubscriptions(); renderActivity(); renderSettings();
+  renderOverview(); renderLibrary(); renderSubscriptions(); renderActivity(); renderSettings(); renderConnectionStatus();
   const capture = state.capture || {};
   const details = [t('capturedCount', { count: (capture.entries || []).length })];
   if (capture.status) details.push(t('captureStatus', { status: t(capture.status) }));
   if (capture.message) details.push(capture.message);
   $('capture-status').textContent = details.join(' · ');
   $('capture-import').disabled = !(capture.entries || []).length;
+}
+function renderConnectionStatus() {
+  const connection = state.lastConnection;
+  const error = localConnectionError || (connection?.status === 'failed' ? connection.error || t('connectionFailed') : '');
+  const waiting = bindingAccount || connection?.status === 'connecting';
+  $('connection-error').hidden = !error && !waiting;
+  $('connection-error').textContent = error ? `${error} ${t('connectionRetryHelp')}` : waiting ? t('connectionWaiting') : '';
 }
 function renderOverview() {
   const settings = state.settings || {};
@@ -183,7 +249,7 @@ function renderSettings() {
   $('bound-account').textContent = settings.accountHandle ? `@${settings.accountHandle}` : t('none');
   $('auto-block').checked = Boolean(settings.autoBlock);
   $('hide-content').checked = settings.hideContent !== false;
-  if (document.activeElement !== $('interval')) $('interval').value = settings.intervalSeconds || 30;
+  if (!intervalDirty && document.activeElement !== $('interval')) $('interval').value = settings.intervalSeconds || 30;
   $('interval').min = '30';
   $('allow-count').textContent = (state.allowlist || []).length;
   const chips = document.createDocumentFragment();
@@ -191,7 +257,7 @@ function renderSettings() {
   if (!state.allowlist?.length) chips.append(element('span', t('noExceptions'), 'muted'));
   $('allow-chips').replaceChildren(chips);
 }
-function showImport() { switchPanel('library'); $('import-card').hidden = false; $('import-text').focus(); }
+function showImport() { switchPanel('library'); $('import-card').hidden = false; $('import-text').focus(); saveDraft(); }
 function previewImport() {
   const text = $('import-text').value.trim();
   if (!text) throw new Error(t('importEmpty'));
@@ -210,11 +276,27 @@ async function exportList(kind) {
 }
 async function startQueue() { await request('QUEUE_APPROVED'); await request('START_QUEUE'); toast(t('queueStarted')); }
 async function pauseQueue() { await request('PAUSE_QUEUE'); toast(t('queuePausedToast')); }
-async function bindAccount() { const result = await request('BIND_ACCOUNT'); toast(t('bindSuccess', { handle: result.state?.settings?.accountHandle || state.settings?.accountHandle })); }
+async function bindAccount() {
+  if (bindingAccount) return;
+  bindingAccount = true; localConnectionError = ''; renderConnectionStatus();
+  const payload = {};
+  try {
+    if (compact && chrome.tabs?.query) {
+      const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+      if (tab?.id != null && /^https:\/\/(www\.)?(x\.com|twitter\.com)\//.test(tab.url || '')) payload.tabId = tab.id;
+    }
+    const result = await request('BIND_ACCOUNT', payload);
+    localConnectionError = '';
+    toast(t('bindSuccess', { handle: result.state?.settings?.accountHandle || state.settings?.accountHandle }));
+  } catch (error) {
+    localConnectionError = error?.message || String(error);
+    throw error;
+  } finally { bindingAccount = false; renderConnectionStatus(); saveDraft(); }
+}
 async function updateSelection(status) { if (!selected.size) throw new Error(t('selectedRequired')); await request('REVIEW', { handles: [...selected], status }); selected.clear(); renderLibrary(); toast(t(status === 'approved' ? 'approvedSuccess' : 'updatedSuccess')); }
 function editEntry(handle) {
   const entry = localEntries().find((value) => value.handle === handle); if (!entry) return;
-  editingHandle = handle; $('edit-account').textContent = `@${handle}`; $('edit-id').value = entry.id || ''; $('edit-reason').value = entry.reason || ''; $('edit-evidence').value = (entry.evidence || []).join('\n'); $('entry-dialog').showModal(); $('edit-reason').focus();
+  editingHandle = handle; $('edit-account').textContent = `@${handle}`; $('edit-id').value = entry.id || ''; $('edit-reason').value = entry.reason || ''; $('edit-evidence').value = (entry.evidence || []).join('\n'); $('entry-dialog').showModal(); $('edit-reason').focus(); saveDraft();
 }
 
 document.querySelectorAll('[data-panel]').forEach((node) => node.addEventListener('click', () => switchPanel(node.dataset.panel)));
@@ -222,7 +304,7 @@ document.querySelectorAll('[data-go]').forEach((node) => node.addEventListener('
 onClick('show-import', showImport); onClick('close-import', () => { $('import-card').hidden = true; });
 onClick('preview-import', previewImport);
 onClick('confirm-import', async () => { const text = $('import-text').value.trim(); if (!text) throw new Error(t('importEmpty')); previewImport(); const result = await request('IMPORT', { text, format: 'auto', approve: false }); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); $('import-text').value = ''; $('import-file').value = ''; $('file-name').textContent = ''; $('import-preview').hidden = true; $('import-card').hidden = true; $('status-filter').value = result.updated ? 'all' : 'pending'; page = 0; renderLibrary(); });
-$('import-file').addEventListener('change', () => action(async () => { const file = $('import-file').files?.[0]; if (!file) return; if (file.size > 4 * 1024 * 1024) throw new Error(t('fileTooLarge')); $('import-text').value = await file.text(); $('file-name').textContent = file.name; previewImport(); }));
+$('import-file').addEventListener('change', () => action(async () => { const file = $('import-file').files?.[0]; if (!file) return; if (file.size > 4 * 1024 * 1024) throw new Error(t('fileTooLarge')); $('import-text').value = await file.text(); $('file-name').textContent = file.name; previewImport(); saveDraft(); }));
 $('import-text').addEventListener('input', () => { $('import-preview').hidden = true; });
 $('search').addEventListener('input', () => { page = 0; renderLibrary(); });
 $('status-filter').addEventListener('change', () => { page = 0; renderLibrary(); });
@@ -253,12 +335,28 @@ onClick('hero-action', async () => { if (!state.settings?.accountHandle) { await
 $('language').addEventListener('change', () => action(async () => { await request('SAVE_SETTINGS', { settings: { language: $('language').value } }); }));
 $('auto-block').addEventListener('change', () => action(async () => { const enabled = $('auto-block').checked; await request('SAVE_SETTINGS', { settings: { autoBlock: enabled } }); toast(t(enabled ? 'autoEnabled' : 'autoDisabled')); }));
 $('hide-content').addEventListener('change', () => action(async () => { await request('SAVE_SETTINGS', { settings: { hideContent: $('hide-content').checked } }); toast(t('saved')); }));
-onClick('save-interval', async () => { const value = Number($('interval').value); if (!Number.isInteger(value) || value < 30 || value > 300) throw new Error(t('intervalInvalid')); await request('SAVE_SETTINGS', { settings: { intervalSeconds: value } }); toast(t('saved')); });
+onClick('save-interval', async () => { const value = Number($('interval').value); if (!Number.isInteger(value) || value < 30 || value > 300) throw new Error(t('intervalInvalid')); await request('SAVE_SETTINGS', { settings: { intervalSeconds: value } }); intervalDirty = false; toast(t('saved')); });
 $('allow-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { await request('ALLOW', { handle: $('allow-handle').value, enabled: true }); $('allow-handle').value = ''; toast(t('saved')); }, event.submitter); });
 $('allow-chips').addEventListener('click', (event) => { const button = event.target.closest('[data-remove-allow]'); if (button) action(async () => { await request('ALLOW', { handle: button.dataset.removeAllow, enabled: false }); toast(t('exceptionRemoved')); }, button); });
 onClick('close-editor', () => $('entry-dialog').close()); onClick('cancel-editor', () => $('entry-dialog').close());
 $('entry-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { const id = $('edit-id').value.trim(); if (id && !/^\d{1,25}$/.test(id)) throw new Error(t('numericIdInvalid')); if (!id && localEntries().find((entry) => entry.handle === editingHandle)?.id) throw new Error(t('numericIdRequired')); await request('EDIT_ENTRY', { handle: editingHandle, id, reason: $('edit-reason').value, evidence: $('edit-evidence').value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }); $('entry-dialog').close(); toast(t('saved')); }, event.submitter); });
 if (globalThis.chrome?.storage?.onChanged) chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.state?.newValue) { state = changes.state.newValue; render(); } });
 window.addEventListener('hashchange', () => switchPanel(location.hash.slice(1)));
-switchPanel(location.hash.slice(1));
-action(async () => { await request('GET_STATE'); });
+switchPanel(requestedPanel);
+if (compact) {
+  document.addEventListener('input', (event) => { if (event.target.id === 'interval') intervalDirty = true; saveDraft(); });
+  document.addEventListener('change', saveDraft);
+  document.addEventListener('click', (event) => { if (event.target.closest('a[target="_blank"]')) saveDraft(); });
+  document.querySelector('.main').addEventListener('scroll', () => { panelScroll[currentPanel] = document.querySelector('.main').scrollTop; clearTimeout(scrollSaveTimer); scrollSaveTimer = setTimeout(saveDraft, 150); }, {passive: true});
+  $('entry-dialog').addEventListener('close', () => { editingHandle = ''; saveDraft(); });
+  window.addEventListener('pagehide', saveDraft);
+}
+action(async () => {
+  const draft = await readDraft();
+  await request('GET_STATE');
+  restoreDraft(draft);
+}).finally(() => {
+  restoringDraft = false;
+  if (compact) document.querySelector('.app-shell').inert = false;
+  if (draftWarningShown) toast(t('draftSaveError'), true);
+});

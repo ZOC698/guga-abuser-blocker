@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Guga Abuser Blocker",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Read-only community blocklist subscriptions for X, private local lists and an account-bound automatic block queue.",
   "incognito": "not_allowed",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "scripting"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
   "optional_host_permissions": ["https://raw.githubusercontent.com/*"],
   "background": {"service_worker": "background.js", "type": "module"},

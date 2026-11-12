@@ -11,5 +11,10 @@ try {
     $packageItems = @($extensionDir, (Join-Path $projectDir 'README.md'), (Join-Path $projectDir 'README.en.md'), (Join-Path $projectDir 'README.zh-CN.md'), (Join-Path $projectDir 'README.ja.md'), (Join-Path $projectDir 'PRIVACY.md'), (Join-Path $projectDir 'DATA_FORMAT.md'), (Join-Path $projectDir 'CONTRIBUTING.md'), (Join-Path $projectDir 'VERIFICATION.md'), (Join-Path $projectDir 'lists'))
     $packageItems += @('schemas', 'scripts', 'tests', 'package.json', 'package-lock.json') | ForEach-Object { Join-Path $projectDir $_ }
     Compress-Archive -Path $packageItems -DestinationPath $zipPath -Force
-    Get-FileHash -LiteralPath $zipPath -Algorithm SHA256 | Format-List Path,Hash
+    $zipStream = [System.IO.File]::OpenRead($zipPath)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $zipHash = [BitConverter]::ToString($sha256.ComputeHash($zipStream)).Replace('-', '')
+        [PSCustomObject]@{ Path = $zipPath; Hash = $zipHash } | Format-List
+    } finally { $zipStream.Dispose(); $sha256.Dispose() }
 } finally { Pop-Location }

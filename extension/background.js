@@ -48,15 +48,47 @@ ready.catch(error=>console.error('Guga initialization failed:',error.message));
 chrome.runtime.onInstalled.addListener(()=>{void ready.then(()=>setup());});
 chrome.runtime.onStartup.addListener(()=>{void ready.then(async()=>{await setup();await schedule();});});
 
+function validateXTab(tab,state,path) {
+  let url;try{url=new URL(tab?.url);}catch{}
+  if(!Number.isInteger(tab?.id)||tab.id<0||tab.incognito||tab.id===state.workerTabId||!url||url.protocol!=='https:'||!['x.com','twitter.com'].includes(url.hostname)||url.username||url.password)throw new Error('Select a normal X tab in this window. The automatic worker tab cannot connect an account.');
+  if(path&&url.pathname!==path&&!url.pathname.startsWith(`${path}/`))throw new Error('Open https://x.com/settings/blocked/all in this window first.');
+  return tab;
+}
+async function checkedXTab(tabId,path) {
+  if(!Number.isInteger(tabId)||tabId<0)throw new Error('Invalid X tab selection.');
+  const state=await readState();return validateXTab(await chrome.tabs.get(tabId),state,path);
+}
 async function recentXTab(path) {
   const state=await readState();
-  const tabs=await chrome.tabs.query({url:['https://x.com/*','https://twitter.com/*']});
-  const matches=tabs.filter(t=>!t.incognito&&t.id!==state.workerTabId && (!path||new URL(t.url).pathname.startsWith(path))).sort((a,b)=>(b.active-a.active)||((b.lastAccessed??0)-(a.lastAccessed??0)));
-  if(!matches.length) throw new Error(path?'Open https://x.com/settings/blocked/all first, then return here.':'Open X and sign in first, then return here.');
-  return matches[0];
+  const tabs=await chrome.tabs.query({currentWindow:true,url:['https://x.com/*','https://twitter.com/*']});
+  const matches=tabs.filter(tab=>{try{validateXTab(tab,state,path);return true;}catch{return false;}}).sort((a,b)=>(Number(b.active)-Number(a.active))||((b.lastAccessed??0)-(a.lastAccessed??0)));
+  if(!matches.length)throw new Error(path?'Open https://x.com/settings/blocked/all in this window first, then return here.':'Open X and sign in in this window first, then return here.');
+  return checkedXTab(matches[0].id,path);
 }
 async function toTab(tabId,message) {
-  try {return await chrome.tabs.sendMessage(tabId,message);}catch(error){throw new Error(`X page did not respond. Refresh that X tab and try again. ${String(error.message).slice(0,180)}`);}
+  try {return await chrome.tabs.sendMessage(tabId,message,{frameId:0});}catch(error){throw new Error(`X page did not respond. Refresh that X tab and try again. ${String(error.message).slice(0,180)}`);}
+}
+
+async function readTabIdentity(tabId) {
+  const read=async()=>{
+    await checkedXTab(tabId);
+    let timer;
+    try{return await Promise.race([
+      chrome.tabs.sendMessage(tabId,{type:'GAB_IDENTITY'},{frameId:0}),
+      new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('The selected X tab did not respond in time. Activate that tab and try again.')),10000);})
+    ]);}finally{clearTimeout(timer);}
+  };
+  try{return await read();}
+  catch(error){
+    // Only a missing receiver permits recovery. Never transparently replay a
+    // native write or a message whose reply may have been lost after execution.
+    if(!/Receiving end does not exist\.?/i.test(String(error.message)))throw error;
+    await checkedXTab(tabId);
+    await chrome.scripting.executeScript({target:{tabId,frameIds:[0]},world:'ISOLATED',files:['content.js']});
+    await checkedXTab(tabId);
+    await chrome.scripting.insertCSS({target:{tabId,frameIds:[0]},files:['content.css']});
+    return read();
+  }
 }
 
 async function fetchSubscription(url) {
@@ -190,10 +222,31 @@ async function handle(message,sender) {
       if(x.autoBlock!=null){state.settings.autoBlock=!!x.autoBlock;if(enabling){enqueueApproved(state);state.paused=false;state.pauseReason='';void schedule();}else if(!x.autoBlock){state.paused=true;state.pauseReason='Automatic blocking disabled';}}
     });
     case 'BIND_ACCOUNT':{
-      const tab=await recentXTab();const result=await toTab(tab.id,{type:'GAB_IDENTITY'});
-      if(!result?.ok)throw new Error(result?.error||'Cannot identify the signed-in X account.');
-      const account=normalizeHandle(result.accountHandle);
-      return mutate(state=>{if(state.queue.some(j=>j.status==='running'))throw new Error('Pause the queue and wait for the current operation before reconnecting.');state.settings.accountHandle=account;state.settings.autoBlock=false;state.paused=true;state.pauseReason='';reconcileQueue(state);log(state,'account-connected',account);});
+      const requestId=uid();
+      await mutate(state=>{
+        if(state.queue.some(j=>j.status==='running'))throw new Error('Pause the queue and wait for the current operation before reconnecting.');
+        state.settings.autoBlock=false;state.paused=true;state.pauseReason='Connecting X account';
+        state.lastConnection={requestId,status:'connecting',tabId:Number.isInteger(message.tabId)?message.tabId:null,at:now(),error:''};
+      });
+      try{
+        const tab=Object.hasOwn(message,'tabId')?await checkedXTab(message.tabId):await recentXTab();
+        await mutate(state=>{if(state.lastConnection?.requestId!==requestId)throw new Error('A newer connection request replaced this one.');state.lastConnection.tabId=tab.id;});
+        const result=await readTabIdentity(tab.id);
+        if(!result?.ok)throw new Error(result?.error||'Cannot identify the signed-in X account.');
+        const account=normalizeHandle(result.accountHandle);
+        // A navigation during the identity request cannot select a different site.
+        await checkedXTab(tab.id);
+        return await mutate(state=>{
+          if(state.lastConnection?.requestId!==requestId)throw new Error('A newer connection request replaced this one.');
+          if(state.queue.some(j=>j.status==='running'))throw new Error('The queue started while connecting. Pause it before reconnecting.');
+          state.settings.accountHandle=account;state.settings.autoBlock=false;state.paused=true;state.pauseReason='';
+          state.lastConnection={...state.lastConnection,status:'connected',at:now(),error:''};
+          reconcileQueue(state);log(state,'account-connected',account);
+        });
+      }catch(error){
+        await mutate(state=>{if(state.lastConnection?.requestId===requestId){state.lastConnection={...state.lastConnection,status:'failed',at:now(),error:String(error.message??error).slice(0,500)};state.paused=true;state.settings.autoBlock=false;state.pauseReason=state.lastConnection.error;}});
+        throw error;
+      }
     }
     case 'IMPORT':return mutate(state=>{const parsed=parseImport(message.text);const merged=mergeLocal(state,parsed.entries);reconcileQueue(state);return {...merged,fileDuplicates:parsed.duplicates};});
     case 'IMPORT_CAPTURE':return mutate(state=>{const result=mergeLocal(state,state.capture.entries.map(e=>({...e,source:'local',status:'pending',reason:'',evidence:[],addedAt:now()})));reconcileQueue(state);return result;});
@@ -239,6 +292,6 @@ async function handle(message,sender) {
     default:throw new Error('Unknown operation.');
   }
 }
-chrome.runtime.onMessage.addListener((message,sender,respond)=>{handle(message,sender).then(result=>respond({ok:true,...result})).catch(err=>respond({ok:false,error:String(err.message??err)}));return true;});
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:String(err.message??err)}));return true;});
 chrome.alarms.onAlarm.addListener(alarm=>ready.then(()=>{if(alarm.name==='gab-sync')return syncAll();if(['gab-queue','gab-watchdog'].includes(alarm.name))return pump();}));
 chrome.tabs.onRemoved.addListener(tabId=>{void ready.then(()=>mutate(state=>{if(state.workerTabId===tabId){state.workerTabId=null;if(state.queue.some(j=>j.status==='running')){state.paused=true;state.pauseReason='Worker tab was closed.';}}},{critical:true}));});

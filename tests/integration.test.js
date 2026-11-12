@@ -10,7 +10,7 @@ const outputs=path.resolve(project,'..');
 
 function fixture(url, blocked=false) {
   const handle=new URL(url).pathname.slice(1)||'home';
-  return `<!doctype html><html><body><button data-testid="SideNav_AccountSwitcher_Button">Owner<br>@fixture_owner</button><main><div data-testid="primaryColumn"><div data-testid="UserName">Fixture<br>@${handle}</div><button data-testid="userActions">More</button><button id="target" data-testid="1234567890123456789-${blocked?'unblock':'follow'}">Follow</button></div></main><script>
+  return `<!doctype html><html><body><nav><a data-testid="AppTabBar_Profile_Link" href="/fixture_owner">Profile</a></nav><button data-testid="SideNav_AccountSwitcher_Button" aria-label="Account menu"><div data-testid="UserAvatar-Container-fixture_owner"><img alt="Owner @unrelated_display" width="30" height="30"></div></button><main><div data-testid="primaryColumn"><div data-testid="UserName">Fixture<br>@${handle}</div><button data-testid="userActions">More</button><button id="target" data-testid="1234567890123456789-${blocked?'unblock':'follow'}">Follow</button></div></main><script>
   document.querySelector('[data-testid="userActions"]').onclick=()=>{
     const menu=document.createElement('div');menu.setAttribute('role','menu');
     const button=document.createElement('button');button.dataset.testid='block';button.textContent='Block @${handle}';menu.append(button);document.body.append(menu);
@@ -60,8 +60,35 @@ test('real unpacked MV3 extension: import, review, locales, export, account-boun
     assert.equal(state.queue.find(j=>j.handle==='fixture_target')?.status,'done',JSON.stringify(state.queue));assert.ok(state.nativeBlocked.fixture_owner['id:1234567890123456789']);assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');assert.equal(state.queue.length,1);assert.equal(blockRequests,1);assert.ok(targetNavigations>=2,'Result must be rechecked after a real navigation');
     await page.locator('#queue-pause').click();await page.reload();assert.equal((await send('GET_STATE')).state.paused,true);
     await page.setViewportSize({width:800,height:900});await page.locator('[data-panel="settings"]').click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
-    await page.goto(`chrome-extension://${id}/popup.html`);await page.waitForFunction(()=>document.body.innerText.includes('Guga'));assert.ok(await page.locator('button').count()>0);
+    const pageCount=context.pages().length;
+    await page.setViewportSize({width:450,height:580});
+    await page.goto(`chrome-extension://${id}/popup.html`);await page.waitForSelector('#language');
+    assert.equal(await page.locator('#open-dashboard').count(),0);
+    for(const language of ['en','ja','zh']){
+      await page.locator('#language').selectOption(language);
+      for(const panel of ['overview','library','subscriptions','activity','settings']){
+        await page.locator(`[data-panel="${panel}"]`).click();
+        assert.equal(await page.locator(`#panel-${panel}`).isVisible(),true);
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${language}/${panel} overflow`);
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+1),`${language}/${panel} should scroll inside the popup`);
+      }
+    }
+    await page.locator('#bind-account').click();
+    await page.waitForFunction(()=>document.querySelector('#bound-account').textContent.includes('fixture_owner'));
+    await page.locator('[data-panel="library"]').click();await page.locator('#show-import').click();
+    await page.locator('#import-text').fill('@popup_draft');
+    await page.waitForFunction(async()=>JSON.stringify(await chrome.storage.session.get(null)).includes('@popup_draft'));
+    await page.reload();await page.waitForFunction(()=>document.querySelector('#import-text')?.value==='@popup_draft');
+    assert.equal(await page.locator('#panel-library').isVisible(),true);
+    await page.locator('#confirm-import').click();await page.waitForFunction(()=>document.querySelector('#import-card').hidden);
+    state=(await send('GET_STATE')).state;assert.equal(state.entries.find(e=>e.handle==='popup_draft')?.status,'pending');
+    const popupDownload=page.waitForEvent('download');await page.locator('#export-list').click();assert.equal((await popupDownload).suggestedFilename(),'guga-private-backup.json');
+    await page.locator('[data-panel="subscriptions"]').click();await page.locator('#sub-name').fill('Draft subscription');await page.locator('#sub-url').fill('https://raw.githubusercontent.com/fixture/repo/main/list.json');
+    await page.waitForFunction(async()=>JSON.stringify(await chrome.storage.session.get(null)).includes('Draft subscription'));
+    await page.reload();await page.waitForFunction(()=>document.querySelector('#sub-name')?.value==='Draft subscription');assert.equal(await page.locator('#panel-subscriptions').isVisible(),true);
+    await page.locator('[data-panel="settings"]').click();await page.screenshot({path:path.join(outputs,'guga-popup-0.1.2-fixture.png')});
+    assert.equal(context.pages().length,pageCount,'Management must not open another tab/window');
     assert.deepEqual(errors,[]);assert.equal(remoteRequests,0);
-    await fs.writeFile(path.join(outputs,'integration-result.json'),JSON.stringify({passed:true,version:'0.1.1',syntheticEntries:523,locales:['zh','en','ja'],nativeBlock:'simulated X DOM; no live account actions',realExtensionLoaded:true,productionWorkerCreation:true,reloadedResult:true,blockRequests,pageErrors:errors,unexpectedRemoteRequests:remoteRequests},null,2));
+    await fs.writeFile(path.join(outputs,'integration-result.json'),JSON.stringify({passed:true,version:'0.1.2',syntheticEntries:523,locales:['zh','en','ja'],nativeBlock:'simulated X DOM; no live account actions',realExtensionLoaded:true,productionWorkerCreation:true,reloadedResult:true,popupManagement:true,popupDraftRecovery:true,blockRequests,pageErrors:errors,unexpectedRemoteRequests:remoteRequests},null,2));
   }catch(error){console.error(JSON.stringify({errors,toast:await page.locator('#toast').textContent().catch(()=>''),pages:await Promise.all(context.pages().map(async p=>({url:p.url(),text:(await p.locator('body').innerText()).slice(-500)})))},null,2));await page.screenshot({path:path.join(work,'integration-failure.png'),fullPage:true});throw error;}finally{await context.close();}
 });

@@ -14,5 +14,5 @@ for(const file of walk(extension)){
     for(const match of text.matchAll(/(?:src|href)="([^"#]+)"/g)){const url=match[1];if(!/^https?:|^chrome:|^mailto:/.test(url)&&!fs.existsSync(path.join(path.dirname(file),url)))throw new Error(`Missing asset: ${url}`);}
   }
 }
-if(manifest.permissions.some(p=>['cookies','webRequest','debugger','unlimitedStorage'].includes(p)))throw new Error('Unexpected privilege');
+if(manifest.permissions.some(p=>!['storage','alarms','scripting'].includes(p)))throw new Error('Unexpected privilege');
 console.log('Manifest, linked assets, script syntax and CSP checks passed.');

@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.1.1 プレビュー
+# Guga Abuser Blocker · 0.1.2 プレビュー
 
 [简体中文](README.zh-CN.md) · [English](README.en.md)
 
@@ -20,7 +20,7 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 1. 拡張機能パッケージを展開して保存し、`chrome://extensions` または `edge://extensions` を開きます。
 2. デベロッパーモードを有効にし、「パッケージ化されていない拡張機能を読み込む」で `manifest.json` が直接入っている **extension** フォルダーを選びます。既存の X タブを再読み込みします。
-3. 管理画面の「リスト購読」に公開 GitHub Raw JSON URL を追加し、`raw.githubusercontent.com` の読み取りを許可します。GitHub アカウント・PAT・X API キーは不要です。
+3. ツールバーの拡張アイコンを押すと、概要・リスト・購読・履歴・設定をすべてポップアップ内で操作できます。別の管理タブは不要です。「リスト購読」に公開 GitHub Raw JSON URL を追加し、`raw.githubusercontent.com` の読み取りを許可します。GitHub アカウント・PAT・X API キーは不要です。
 4. ログイン済みの X タブを開き、「設定とヘルプ」で使用するアカウントを接続します。これは操作対象のアカウントの選択であり、開発者向け OAuth 認可ではありません。
 5. 自動 X ブロックを有効にします。更新後、対象項目が待機列に入ります。ブラウザーと専用の X タブを開いたままにしてください。操作間隔は 30〜300 秒です。
 

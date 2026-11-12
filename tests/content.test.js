@@ -24,23 +24,29 @@ function initialState() {
 test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MODULE or install playwright to run browser fixtures.' }, async t => {
   const browser = await playwright.chromium.launch({ headless: true, ...(process.env.GAB_CHROMIUM_PATH ? { executablePath: process.env.GAB_CHROMIUM_PATH } : {}) });
   const pages = [];
-  async function fixture({ path = '/target_user', state = initialState(), blocked = false } = {}) {
+  async function fixture({ path = '/target_user', state = initialState(), blocked = false, loadedMarker } = {}) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     pages.push(page);
-    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><button data-testid="SideNav_AccountSwitcher_Button">Owner @owner_user</button><main><div data-testid="primaryColumn"><div data-testid="UserName">Target @target_user</div><button data-testid="userActions">More</button><button id="follow" data-testid="1234567890123456789-follow">Follow</button></div></main></body></html>' }));
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><header><nav><a data-testid="AppTabBar_Profile_Link" href="/owner_user">Profile</a></nav><button data-testid="SideNav_AccountSwitcher_Button"><div data-testid="UserAvatar-Container-owner_user" style="width:24px;height:24px"></div></button></header><main><div data-testid="primaryColumn"><div data-testid="UserName">Target @target_user</div><button data-testid="userActions">More</button><button id="follow" data-testid="1234567890123456789-follow">Follow</button></div></main></body></html>' }));
     await page.goto(`https://x.com${path}`);
-    await page.evaluate(({ state, blocked }) => {
+    await page.evaluate(({ state, blocked, loadedMarker }) => {
+      if (loadedMarker !== undefined) window.__gugaAbuserBlockerLoaded = loadedMarker;
       window.__state = state;
+      window.__listenerRegistrations = 0;
       window.__clicks = [];
       window.__reports = [];
       window.__guards = 0;
       window.__mutateAt = 0;
       window.__mode = '';
       window.__afterConfirm = '';
+      window.__switchAccount = account => {
+        document.querySelector('[data-testid="AppTabBar_Profile_Link"]').setAttribute('href', `/${account}`);
+        document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"] [data-testid^="UserAvatar-Container-"]').dataset.testid = `UserAvatar-Container-${account}`;
+      };
       window.chrome = {
         runtime: {
           id: 'test-extension',
-          onMessage: { addListener(listener) { window.__listener = listener; } },
+          onMessage: { addListener(listener) { window.__listenerRegistrations++; window.__listener = listener; } },
           async sendMessage(message) {
             if (message.type === 'GET_STATE') {
               window.__guards++;
@@ -49,6 +55,7 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
                 if (window.__mode === 'allow-alias') window.__state.allowlist = ['old_target'];
                 if (window.__mode === 'remove') window.__state.entries = [];
                 if (window.__mode === 'pause') window.__state.paused = true;
+                if (window.__mode === 'switch-account') window.__switchAccount('other_owner');
               }
               return { ok: true, state: structuredClone(window.__state) };
             }
@@ -94,13 +101,137 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
         menu.append(block);
         document.body.append(menu);
       });
-    }, { state, blocked });
+    }, { state, blocked, loadedMarker });
     await page.addStyleTag({ content: css });
     await page.addScriptTag({ content: source });
     return page;
   }
 
   try {
+    await t.test('an old loaded marker permits the update but the same version cannot register twice', async () => {
+      const page = await fixture({ loadedMarker: true });
+      assert.equal(await page.evaluate(() => window.__gugaAbuserBlockerLoaded), '0.1.2');
+      assert.equal(await page.evaluate(() => window.__listenerRegistrations), 1);
+      await page.addScriptTag({ content: source });
+      assert.equal(await page.evaluate(() => window.__listenerRegistrations), 1);
+      assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' });
+    });
+
+    await t.test('identifies the real compact-sidebar structure with an empty account-button label', async () => {
+      const page = await fixture();
+      await page.setViewportSize({ width: 500, height: 900 });
+      assert.equal(await page.locator('[data-testid="SideNav_AccountSwitcher_Button"]').innerText(), '');
+      const result = await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' }));
+      assert.deepEqual(result, { ok: true, accountHandle: 'owner_user' });
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
+    });
+
+    await t.test('display names and mentions never override structured account identity', async () => {
+      const page = await fixture();
+      for (const displayName of ['Lucis', 'Lucis @someone_else', '@other_owner']) {
+        await page.evaluate(displayName => {
+          const button = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+          button.querySelector('.display-name')?.remove();
+          const name = document.createElement('span');
+          name.className = 'display-name';
+          name.textContent = displayName;
+          button.append(name);
+          document.querySelector('[data-testid="AppTabBar_Profile_Link"]').textContent = 'プロフィール';
+        }, displayName);
+        assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' }, displayName);
+      }
+    });
+
+    await t.test('conflicting navigation or account-avatar identities fail closed', async () => {
+      for (const mode of ['profile', 'avatar', 'avatars', 'invalid-profile']) {
+        const page = await fixture();
+        await page.evaluate(mode => {
+          if (mode === 'profile') {
+            const link = document.querySelector('[data-testid="AppTabBar_Profile_Link"]').cloneNode(true);
+            link.href = '/other_owner';
+            document.querySelector('nav').append(link);
+          }
+          if (mode === 'avatar') document.querySelector('[data-testid="UserAvatar-Container-owner_user"]').dataset.testid = 'UserAvatar-Container-other_owner';
+          if (mode === 'avatars') {
+            const avatar = document.querySelector('[data-testid="UserAvatar-Container-owner_user"]').cloneNode(true);
+            avatar.dataset.testid = 'UserAvatar-Container-other_owner';
+            document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]').append(avatar);
+          }
+          if (mode === 'invalid-profile') document.querySelector('[data-testid="AppTabBar_Profile_Link"]').href = '/settings';
+        }, mode);
+        const identity = await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' }));
+        assert.equal(identity.ok, false, mode);
+        const result = await page.evaluate(request => window.__send(request), request);
+        assert.equal(result.ok, false, mode);
+        assert.equal(result.uncertain, false, mode);
+        assert.deepEqual(await page.evaluate(() => window.__clicks), [], mode);
+      }
+    });
+
+    await t.test('another user profile, posts, and hidden navigation never become the signed-in account', async () => {
+      const page = await fixture();
+      await page.evaluate(() => {
+        const hidden = document.querySelector('[data-testid="AppTabBar_Profile_Link"]').cloneNode(true);
+        hidden.href = '/hidden_owner';
+        hidden.hidden = true;
+        document.querySelector('nav').append(hidden);
+        const author = document.createElement('article');
+        author.innerHTML = '<nav><a data-testid="AppTabBar_Profile_Link" href="/post_author">Author profile</a></nav><a href="/post_author">@post_author</a>';
+        document.querySelector('main').append(author);
+      });
+      assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' });
+      assert.equal(await page.locator('[data-testid="UserName"]').innerText(), 'Target @target_user');
+    });
+
+    await t.test('connection waits for profile navigation to become ready without opening any menu', async () => {
+      const page = await fixture();
+      await page.evaluate(() => {
+        const link = document.querySelector('[data-testid="AppTabBar_Profile_Link"]');
+        link.remove();
+        setTimeout(() => document.querySelector('nav').append(link), 250);
+      });
+      assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' });
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
+    });
+
+    await t.test('logged-out pages fail after bounded readiness waiting and cannot use arbitrary profile links', async () => {
+      const page = await fixture();
+      await page.clock.install();
+      await page.evaluate(() => {
+        document.querySelector('header').remove();
+        const fake = document.createElement('nav');
+        fake.innerHTML = '<a data-testid="AppTabBar_Profile_Link" href="/target_user">Viewed profile</a>';
+        document.querySelector('main').append(fake);
+        window.__identityResult = null;
+        void window.__send({ type: 'GAB_IDENTITY' }).then(result => { window.__identityResult = result; });
+      });
+      await page.clock.runFor(8200);
+      const result = await page.evaluate(() => window.__identityResult);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /profile navigation is not available/i);
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
+    });
+
+    await t.test('SPA account changes are read afresh and invalidate the old bound queue', async () => {
+      const page = await fixture();
+      assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' });
+      await page.evaluate(() => window.__switchAccount('other_owner'));
+      assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'other_owner' });
+      const result = await page.evaluate(request => window.__send(request), request);
+      assert.equal(result.ok, false);
+      assert.equal(result.uncertain, false);
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
+    });
+
+    await t.test('an SPA account switch before confirmation cancels the final click', async () => {
+      const page = await fixture();
+      await page.evaluate(() => { window.__mutateAt = 4; window.__mode = 'switch-account'; });
+      const result = await page.evaluate(request => window.__send(request), request);
+      assert.equal(result.ok, false);
+      assert.equal(result.uncertain, true);
+      assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block']);
+    });
+
     await t.test('blocks exactly the verified profile and returns its numeric ID', async () => {
       const page = await fixture();
       const result = await page.evaluate(request => window.__send(request), request);
@@ -123,7 +254,7 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
         const page = await fixture();
         await page.evaluate(mode => {
           if (mode === 'id') document.querySelector('#follow').dataset.testid = '9999999999999999999-follow';
-          if (mode === 'account') document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]').textContent = 'Another @other_owner';
+          if (mode === 'account') window.__switchAccount('other_owner');
           if (mode === 'pause') window.__state.paused = true;
           if (mode === 'allow') window.__state.allowlist = ['target_user'];
           if (mode === 'run') window.__state.runId = 'new-run';
@@ -235,7 +366,7 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
         const page = await fixture({ blocked: true });
         await page.evaluate(mode => {
           if (mode === 'id') document.querySelector('#follow').dataset.testid = '9999999999999999999-unblock';
-          if (mode === 'account') document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]').textContent = 'Another @other_owner';
+          if (mode === 'account') window.__switchAccount('other_owner');
           if (mode === 'pause') window.__state.paused = true;
           if (mode === 'allow') window.__state.allowlist = ['target_user'];
           if (mode === 'remove') window.__state.entries = [];

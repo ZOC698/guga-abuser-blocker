@@ -1,6 +1,6 @@
-# Verification · 0.1.1 preview · 2026-11-12
+# Verification · 0.1.2 preview · 2026-11-12
 
-This document distinguishes local evidence from live-X compatibility. The final combined 0.1.1 run passed **86 tests, 0 failures, 0 skipped** on 2026-11-12: 61 unit tests and 25 browser tests (including the browser-suite parent test).
+This document distinguishes local evidence from live-X compatibility. The final combined 0.1.2 run passed **104 tests, 0 failures, 0 skipped** on 2026-11-12: 70 unit tests and 34 browser tests (including the browser-suite parent test).
 
 ## Current execution boundary
 
@@ -14,11 +14,15 @@ Local numeric IDs can be filled or corrected; corrections of existing IDs requir
 
 An isolated Chromium 148.0.7778.96 browser loaded the actual options and popup scripts with mocked extension messages and synthetic entries. All three languages navigated every panel without page errors. The probe confirmed private-only export choices, absence of publishing controls, import updated counts, exact 25-digit ID strings, rejection of clearing a known ID before sending a message, invalid-ID form rejection, corrected-ID submission, private download, an 800-pixel layout and unique DOM IDs. No external page requests occurred.
 
-This UI probe does not validate X authentication. The separate unpacked-extension integration test exercised the actual service worker, production worker-tab creation, a simulated block and reload readback, Chinese/Japanese/English, ID editing and private downloads. It used 523 synthetic pending entries, zero private-file reads and zero unexpected external requests. Manifest-linked assets, JavaScript syntax, CSP and the empty public-list schema also passed.
+This isolated UI probe does not validate X authentication. The separate unpacked-extension integration test exercised the actual service worker, production worker-tab creation, a simulated block and reload readback, Chinese/Japanese/English, ID editing and private downloads. It used 523 synthetic pending entries, zero private-file reads and zero unexpected external requests. Manifest-linked assets, JavaScript syntax, CSP and the empty public-list schema also passed.
+
+The 0.1.2 popup mounts the same management controller directly into a 450 × 580 view. The integration test visits all five panels in each language, checks document overflow, confirms there is no open-dashboard control or extra management tab, binds the fixture account, restores import/subscription drafts after reload, and downloads a private backup. A separate UI probe covers editor drafts, pending connection state, persisted connection failure, subscription permission gestures and repeated-click suppression. Drafts use session storage, not public repository writes.
+
+New identity fixtures cover empty account-button text, compact navigation, misleading handles in display names, profile/avatar conflicts, another user's profile, absent login navigation, delayed page rendering, SPA account changes, and a switch immediately before confirmation. Background fixtures cover explicit tab selection, current-window fallback, invalid/non-X/incognito/worker tabs, missing-receiver recovery, navigation races, concurrent connection requests and a closed popup's response callback. The old-version marker fixture tests marker compatibility and same-version deduplication; it does not model every surviving old observer after an extension update.
 
 Unit and content fixtures cover ID enrichment/correction/rename, persistent allowlist ID pins, legacy handle history, conflicting sources, pre-click durable pins, lost replies, final-ID changes, failed reload readback, normal/suspended/restarted worker state, oversized atomic subscription rejection and oversized legacy backup/cleanup recovery. Missing browser dependencies make the required `test:browser` command fail; CI runs that command explicitly.
 
-The existing local Chrome installation was reloaded through its Extensions UI, which displayed version 0.1.1. Its dashboard opened successfully with the queue paused, no bound account and zero entries/subscriptions. No real X block or unblock was sent.
+The existing local Chrome installation was reloaded through its Extensions UI, which displayed version 0.1.2. On an already-open, signed-in X tab with an empty account-button text and a structured avatar handle, the actual toolbar popup connected successfully and displayed the matching account. The popup remained open and switched from Overview to Settings inside the same popup. The automatic-blocking switch remained off; no real X block or unblock was sent. This is a real local connection check, not proof of a complete live block workflow. The screenshot is kept outside the public repository to avoid publishing a user's account identifier.
 
 ## Covered categories
 
@@ -33,7 +37,7 @@ See the current test-run output for completed checks. A test skipped for missing
 
 A complete authenticated block workflow on real X across Chrome and Edge, languages, account states, browser versions and privacy settings remains unverified. No real block/unblock is performed merely to validate the documentation or UI. Local fixture success does not guarantee compatibility with X's current page or internal endpoints.
 
-This is a developer-load preview. Browser-store acceptance and a published 0.1.1 release are separate actions and are not established by passing tests. Private review data stays outside the repository and release package.
+This is a developer-load preview. Browser-store acceptance and a published GitHub release are separate actions and are not established by passing tests. Private review data stays outside the repository and release package.
 
 ## Rerun
 

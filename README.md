@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.1.1 preview
+# Guga Abuser Blocker · 0.1.2 preview
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
@@ -20,7 +20,7 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 1. Extract the extension package and keep its folder. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode**, select **Load unpacked**, and choose the **extension** folder containing `manifest.json` directly. Refresh existing X tabs.
-3. Open the dashboard. In **Subscriptions**, add the public GitHub Raw JSON URL and grant access to `raw.githubusercontent.com`. No GitHub account, PAT or X API key is needed.
+3. Click the toolbar icon. The complete dashboard opens inside the popup: overview, account library, subscriptions, activity and settings. In **Subscriptions**, add the public GitHub Raw JSON URL and grant access to `raw.githubusercontent.com`. No separate management tab, GitHub account, PAT or X API key is needed.
 4. Open a signed-in X tab and choose **Connect X account** under **Settings & help**. This selects the account the queue may act on; it is not a developer OAuth grant.
 5. Enable **Automatic X blocking**. Eligible entries are queued after refresh. Keep the browser and dedicated X tab open. Actions are at least 30 seconds apart, adjustable up to 300 seconds.
 

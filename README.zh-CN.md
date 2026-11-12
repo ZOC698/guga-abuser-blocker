@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.1.1 预览版
+# Guga Abuser Blocker · 0.1.2 预览版
 
 [English](README.en.md) · [日本語](README.ja.md)
 
@@ -20,7 +20,9 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 1. 解压扩展包并保留文件夹。打开 `chrome://extensions` 或 `edge://extensions`。
 2. 开启「开发者模式」，点击「加载已解压的扩展程序」，选择直接包含 `manifest.json` 的 **extension** 文件夹，然后刷新已有 X 标签页。
-3. 打开扩展管理面板，在「名单订阅」添加公开 GitHub Raw JSON 链接，并授予 `raw.githubusercontent.com` 读取权限。无需 GitHub 账号、PAT 或 X API 密钥。
+3. 点击工具栏扩展图标，即可在弹窗里使用完整的概览、名单、订阅、记录与设置，无需另开管理标签页。在「名单订阅」添加公开 GitHub Raw JSON 链接，并授予 `raw.githubusercontent.com` 读取权限。无需 GitHub 账号、PAT 或 X API 密钥。
+
+连接时优先读取当前 X 标签页，只在当前窗口内选择账号。识别使用 X 自己的个人主页导航和账号头像标识，支持账号按钮不显示用户名的布局。扩展更新后若当前页面尚未加载脚本，连接操作会在该 X 页补载本地脚本。弹窗关闭后，输入草稿和导航位置会保留到本次浏览器会话结束；它们不会上传。
 4. 打开已登录的 X 标签页，在「设置与帮助」连接账号。这是选定队列可以操作的账号，不是开发者 OAuth 授权。
 5. 开启「自动 X 拉黑」。刷新后符合条件的条目会进入队列；保持浏览器和专用 X 标签页打开。操作间隔至少 30 秒，可调至 300 秒。
 

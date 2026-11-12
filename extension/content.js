@@ -2,8 +2,9 @@
 (() => {
   'use strict';
 
-  if (globalThis.__gugaAbuserBlockerLoaded) return;
-  globalThis.__gugaAbuserBlockerLoaded = true;
+  const CONTENT_VERSION = '0.1.2';
+  if (globalThis.__gugaAbuserBlockerLoaded === CONTENT_VERSION) return;
+  globalThis.__gugaAbuserBlockerLoaded = CONTENT_VERSION;
 
   const RESERVED = new Set(['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'search', 'compose', 'login', 'logout', 'signup', 'tos', 'privacy', 'intent', 'share']);
   const words = {
@@ -40,11 +41,43 @@
   }
 
   function identity() {
-    const buttons = [...document.querySelectorAll('[data-testid="SideNav_AccountSwitcher_Button"]')].filter(visible);
-    if (buttons.length !== 1) throw new Error('Cannot uniquely identify the signed-in X account. Open X in a desktop-width window.');
-    const matches = handlesInText(buttons[0].innerText || buttons[0].textContent);
-    if (matches.length !== 1) throw new Error('The signed-in X account is ambiguous or not visible.');
-    return matches[0];
+    // The navigation Profile link belongs to the signed-in account, unlike
+    // profile headers, tweet authors, or mentions in a user's display name.
+    const links = [...document.querySelectorAll('a[data-testid="AppTabBar_Profile_Link"][href]')]
+      .filter(link => visible(link) && link.closest('nav,[role="navigation"],header,[role="banner"]') &&
+        !link.closest('main,article,[data-testid="UserCell"],[role="menu"],[role="dialog"]'));
+    if (!links.length) {
+      const error = new Error('The signed-in X profile navigation is not available. Sign in and wait for X to finish loading.');
+      error.code = 'IDENTITY_PENDING';
+      throw error;
+    }
+    const profiles = links.map(link => profileFromURL(link.getAttribute('href')));
+    if (profiles.some(value => !value) || new Set(profiles).size !== 1) throw new Error('The signed-in X profile navigation is ambiguous or conflicting.');
+    const account = profiles[0];
+    const buttons = [...document.querySelectorAll('[data-testid="SideNav_AccountSwitcher_Button"]')]
+      .filter(button => visible(button) && !button.closest('main,article,[data-testid="UserCell"],[role="menu"],[role="dialog"]'));
+    const prefix = 'UserAvatar-Container-';
+    for (const button of buttons) {
+      // In the compact X sidebar the button has no text at all. Its avatar
+      // carries a structured handle; display text is never an identity source.
+      const avatars = [...button.querySelectorAll('[data-testid^="UserAvatar-Container-"]')].filter(visible);
+      const handles = avatars.map(avatar => handle(avatar.dataset.testid.slice(prefix.length)));
+      if (handles.some(value => !value) || new Set(handles).size > 1 || (handles.length && handles[0] !== account)) {
+        throw new Error('The X account menu conflicts with the signed-in profile navigation.');
+      }
+    }
+    return account;
+  }
+
+  async function readyIdentity() {
+    const deadline = Date.now() + 8000;
+    while (true) {
+      try { return identity(); }
+      catch (error) {
+        if (error.code !== 'IDENTITY_PENDING' || Date.now() >= deadline) throw error;
+        await sleep(200);
+      }
+    }
   }
 
   function visible(element) {
@@ -420,9 +453,9 @@
     if (sender.id && sender.id !== chrome.runtime.id) return false;
     if (!request || typeof request.type !== 'string') return false;
     if (request.type === 'GAB_IDENTITY') {
-      try { respond({ ok: true, accountHandle: identity() }); }
-      catch (error) { respond({ ok: false, error: error.message }); }
-      return false;
+      readyIdentity().then(accountHandle => respond({ ok: true, accountHandle }))
+        .catch(error => respond({ ok: false, error: error.message }));
+      return true;
     }
     if (request.type === 'GAB_BLOCK') {
       nativeBlock(request).then(respond);
