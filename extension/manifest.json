@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Guga Abuser Blocker",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Read-only community blocklist subscriptions for X, private local lists and an account-bound automatic block queue.",
   "incognito": "not_allowed",
   "minimum_chrome_version": "120",

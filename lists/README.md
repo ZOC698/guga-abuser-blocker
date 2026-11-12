@@ -1,6 +1,8 @@
-# Public subscription list · 0.2.3
+# Public subscription list · 0.2.4
 
 `guga-blocklist.json` is the source for the default enabled official subscription and its packaged starting copy. The initial 523 accounts were selected by the owner from imported blocking preferences and authorized for publication as minimal `{handle,id}` rows. Inclusion is not an independently verified finding of abuse. The extension only reads this file, accepts no PAT and cannot upload local data or modify the public branch. Only maintainers with GitHub write permission can publish changes; subscriber list PRs are not the publication workflow.
+
+Version 0.2.4 starts with the packaged copy without immediately fetching GitHub, then automatically refreshes on a persisted 30-day deadline. Restart, reload and X connection do not fetch before it is due. Upgrades derive that deadline from saved `lastSync` plus 30 days. Manual refresh or actively adding a subscription fetches immediately; manual refresh postpones the next automatic refresh by 30 days. Failed fetches keep the cache and wait 30 days for the next automatic attempt. Newly published additions, corrections and removals can therefore take a month to reach automatic subscribers, or longer after downtime or failures. This reduces requests but does not hide subscribers' outbound IP addresses.
 
 中文：初始 523 条是所有者授权公开的屏蔽偏好，不代表已独立核实虐待行为。只发布用户名和精确数字 ID，不编造理由或证据。维护者选定的条目无需额外批准状态；如明确写了 `pending` 或 `excluded`，仍会排除。
 
@@ -26,6 +28,6 @@ Inspect the diff, then publish this file at the same path through the maintainer
 https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blocklist.json
 ```
 
-Verify that address returns the intended JSON before sharing it. Updating the file retains the subscription location. Removal prevents future list matches but does not reverse blocks already applied on X.
+Verify that address returns the intended JSON before sharing it. Updating the file retains the subscription location; publishing does not push an immediate update to subscribers. Once a subscriber receives the changed list, removal prevents future list matches but does not reverse blocks already applied on X.
 
 To remove an entry, remove it from the selected input or mark it `excluded`, rebuild and synchronize the packaged copy, then commit the resulting diff. Publish only the selected public fields; omit private notes, original working exports and access tokens. CI checks format and code, not whether an account has engaged in abuse.

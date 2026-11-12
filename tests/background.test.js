@@ -1,6 +1,6 @@
 import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
-import {initialState as createInitialState,effectiveEntries} from '../extension/lib/core.js';
+import {initialState as createInitialState,effectiveEntries,SUBSCRIPTION_REFRESH_MS} from '../extension/lib/core.js';
 import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_LIST_VERSION,OFFICIAL_SEED} from '../extension/lib/official-list.js';
 import {STATE_BUDGET,stateBytes} from '../extension/lib/storage-budget.js';
 
@@ -441,31 +441,41 @@ test('fresh install exposes all 523 official IDs and only executes after verifie
   let result=await send({type:'GET_STATE'});assert.equal(result.state.entries.length,523);assert.equal(result.state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);
   assert.equal(result.state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(result.state.settings.autoBlock,false);assert.equal(result.state.paused,true);assert.equal(result.state.queue.length,0);
   await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);assert.equal((await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}})).ok,false);assert.equal(requests.length,0);
-  result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true);await until(()=>storage.state.lastSync);
+  result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true);assert.equal(storage.state.lastSync,null);assert.equal(requests.filter(call=>call.url===OFFICIAL_SUBSCRIPTION_URL).length,0);
   assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(storage.state.queue.length,0);assert.equal(posts().length,0);
   assert.deepEqual(requests.filter(call=>new URL(call.url).origin==='https://x.com').map(call=>new URL(call.url).pathname),[VIEWER_PATH]);
   result=await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}});assert.equal(result.ok,true);assert.equal(result.state.queue.length,523);assert.ok(result.state.queue.every(job=>job.status==='pending'&&job.accountId===ACCOUNT&&job.userId));assert.equal(posts().length,0);
   await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);assert.equal(posts()[0].body,`user_id=${OFFICIAL_SEED.entries[0].id}`);
 });
 
-test('install startup and six-hour alarms refresh the official source without enabling execution',async()=>{
+test('fresh install startup connection and legacy six-hour alarms stay offline until the monthly deadline',async()=>{
   reset();storage={state:createInitialState()};
+  const deadline=clock+SUBSCRIPTION_REFRESH_MS;
   fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?json({schema:'guga-blocklist/v1',entries:[{handle:'curated_new',id:'777'}]}):undefined;
-  await installedListener();assert.equal(alarms.get('gab-sync').periodInMinutes,360);assert.deepEqual(storage.state.entries.map(row=>[row.handle,row.id,row.source]),[['curated_new','777',OFFICIAL_SUBSCRIPTION_ID]]);
+  alarms.set('gab-sync',{periodInMinutes:360});
+  await installedListener();await startupListener();await alarmListener({name:'gab-sync'});
+  assert.deepEqual(alarms.get('gab-sync'),{when:deadline});assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.lastSyncAttemptAt,null);assert.equal(storage.state.entries.length,523);assert.equal(requests.length,0);
+  assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.deepEqual(apiPaths(),['Viewer']);assert.equal(storage.state.nextAutoSyncAt,deadline);requests=[];
+  clock=deadline-1;await startupListener();await alarmListener({name:'gab-sync'});assert.equal(requests.length,0);assert.equal(storage.state.nextAutoSyncAt,deadline);
+  clock=deadline;await alarmListener({name:'gab-sync'});
+  assert.deepEqual(storage.state.entries.map(row=>[row.handle,row.id,row.source]),[['curated_new','777',OFFICIAL_SUBSCRIPTION_ID]]);
   assert.equal(storage.state.subscriptions[0].count,1);assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(storage.state.queue.length,0);
-  await startupListener();await alarmListener({name:'gab-sync'});
-  assert.equal(requests.length,3);assert.ok(requests.every(call=>call.url===OFFICIAL_SUBSCRIPTION_URL&&call.method==='GET'&&call.init.credentials==='omit'));assert.equal(posts().length,0);
+  assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);assert.equal(storage.state.lastSyncAttemptAt,new Date(clock).toISOString());assert.deepEqual(alarms.get('gab-sync'),{when:clock+SUBSCRIPTION_REFRESH_MS});
+  await startupListener();await installedListener();await alarmListener({name:'gab-sync'});
+  assert.equal(requests.length,1);assert.ok(requests.every(call=>call.url===OFFICIAL_SUBSCRIPTION_URL&&call.method==='GET'&&call.init.credentials==='omit'));assert.equal(posts().length,0);
 });
 
-test('connection is durable before a slow official refresh and cached IDs remain available offline',async()=>{
+test('connection uses the cached seed and manual refresh alone can start a slow GitHub request',async()=>{
   reset();storage={state:createInitialState()};let release;
   fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?new Promise(resolve=>{release=resolve;}):undefined;
   const result=await send({type:'BIND_ACCOUNT'});
+  assert.equal(release,undefined);assert.deepEqual(apiPaths(),['Viewer']);
+  const refresh=send({type:'SYNC'});
   try {
     assert.equal(result.ok,true);assert.equal(result.state.lastConnection.status,'connected');assert.equal(result.state.entries.length,523);assert.equal(storage.state.settings.autoBlock,false);
-    await until(()=>release);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.entries.length,523);assert.equal(posts().length,0);
+    await until(()=>release);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.entries.length,523);assert.equal(posts().length,0);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);
   } finally {if(release)release(json({},503));}
-  await until(()=>storage.state.subscriptions[0].error);assert.match(storage.state.subscriptions[0].error,/503/);assert.equal(storage.state.entries.length,523);assert.equal(storage.state.lastConnection.status,'connected');
+  assert.equal((await refresh).ok,true);assert.match(storage.state.subscriptions[0].error,/503/);assert.equal(storage.state.entries.length,523);assert.equal(storage.state.lastConnection.status,'connected');
 });
 
 test('official refresh keeps the last good seed on invalid data and accepts an explicitly empty curator list',async()=>{
@@ -507,4 +517,67 @@ test('official source rows cannot be edited removed or uploaded through private-
   assert.deepEqual(storage.state.entries,original);assert.equal(requests.length,0);
   assert.equal((await send({type:'ALLOW',handle:target.handle,enabled:true})).ok,true);
   assert.equal(effectiveEntries(storage.state).some(row=>row.id===target.id),false);assert.deepEqual(storage.state.entries,original);assert.equal(posts().length,0);
+});
+
+test('legacy refresh deadlines migrate from last successful sync and do not slide on reload',async()=>{
+  for(const ageDays of [10,40]){
+    reset();storage={state:createInitialState()};delete storage.state.nextAutoSyncAt;delete storage.state.lastSyncAttemptAt;
+    const previousSync=clock-ageDays*24*60*60*1000;storage.state.lastSync=new Date(previousSync).toISOString();
+    const deadline=previousSync+SUBSCRIPTION_REFRESH_MS;
+    alarms.set('gab-sync',{periodInMinutes:360});await reloadWorker();assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(requests.length,0);
+    assert.equal(alarms.get('gab-sync').periodInMinutes,undefined);assert.equal(alarms.get('gab-sync').when,Math.max(clock+30000,deadline));
+    clock+=1000;await reloadWorker();assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(requests.length,0);
+    await installedListener();assert.equal(requests.length,ageDays===40?1:0);
+    assert.equal(storage.state.nextAutoSyncAt,ageDays===40?clock+SUBSCRIPTION_REFRESH_MS:deadline);
+  }
+  for(const lastSync of [null,'invalid']){
+    reset();storage={state:createInitialState()};delete storage.state.nextAutoSyncAt;storage.state.lastSync=lastSync;
+    const installedAt=clock;await reloadWorker();assert.equal(storage.state.nextAutoSyncAt,installedAt+SUBSCRIPTION_REFRESH_MS);
+    clock+=86400000;session={};await reloadWorker();await startupListener();assert.equal(storage.state.nextAutoSyncAt,installedAt+SUBSCRIPTION_REFRESH_MS);assert.equal(requests.length,0);
+  }
+});
+
+test('failed automatic refresh reserves a full month and cannot retry through old alarms restart or reconnect',async()=>{
+  reset();storage={state:createInitialState()};const original=structuredClone(storage.state.entries);
+  clock=storage.state.nextAutoSyncAt;
+  fetchHook=async call=>{if(call.url===OFFICIAL_SUBSCRIPTION_URL){assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS,'Deadline must be durable before fetch');assert.equal(storage.state.lastSyncAttemptAt,new Date(clock).toISOString());return json({},503);}return undefined;};
+  await alarmListener({name:'gab-sync'});const next=clock+SUBSCRIPTION_REFRESH_MS;
+  assert.equal(requests.length,1);assert.deepEqual(storage.state.entries,original);assert.match(storage.state.subscriptions[0].error,/503/);assert.equal(storage.state.lastSync,null);
+  const attempt=storage.state.lastSyncAttemptAt;
+  await reloadWorker();session={};await reloadWorker();await startupListener();await installedListener();await alarmListener({name:'gab-sync'});
+  assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.equal(requests.filter(call=>call.url===OFFICIAL_SUBSCRIPTION_URL).length,1);assert.equal(storage.state.nextAutoSyncAt,next);assert.equal(storage.state.lastSyncAttemptAt,attempt);
+  clock=next-1;await alarmListener({name:'gab-sync'});assert.equal(requests.filter(call=>call.url===OFFICIAL_SUBSCRIPTION_URL).length,1);
+  clock=next;await alarmListener({name:'gab-sync'});assert.equal(requests.filter(call=>call.url===OFFICIAL_SUBSCRIPTION_URL).length,2);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);assert.deepEqual(storage.state.entries,original);assert.equal(posts().length,0);
+});
+
+test('an in-flight refresh persists its deadline before worker restart and duplicate automatic triggers',async()=>{
+  reset();storage={state:createInitialState()};clock=storage.state.nextAutoSyncAt;let release;
+  fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?new Promise(resolve=>{release=resolve;}):undefined;
+  const pending=alarmListener({name:'gab-sync'});await until(()=>release);
+  const deadline=storage.state.nextAutoSyncAt;assert.equal(deadline,clock+SUBSCRIPTION_REFRESH_MS);assert.equal(requests.length,1);
+  try {
+    await alarmListener({name:'gab-sync'});await startupListener();await reloadWorker();await startupListener();await alarmListener({name:'gab-sync'});
+    assert.equal(requests.length,1);assert.equal(storage.state.nextAutoSyncAt,deadline);
+  } finally {release(json(OFFICIAL_SEED));}
+  await pending;assert.equal(requests.length,1);assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.entries.length,523);assert.equal(posts().length,0);
+});
+
+test('manual refresh bypasses the due guard and resets the monthly deadline on success or failure',async()=>{
+  reset();storage={state:createInitialState()};const initialDeadline=storage.state.nextAutoSyncAt;
+  clock+=2*86400000;assert.equal((await send({type:'SYNC'})).ok,true);
+  assert.equal(requests.length,1);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);assert.ok(storage.state.nextAutoSyncAt>initialDeadline);assert.equal(storage.state.lastSyncAttemptAt,new Date(clock).toISOString());assert.deepEqual(alarms.get('gab-sync'),{when:clock+SUBSCRIPTION_REFRESH_MS});
+  const lastGood=storage.state.lastSync,entries=structuredClone(storage.state.entries);
+  clock+=86400000;fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?json({},503):undefined;
+  assert.equal((await send({type:'SYNC'})).ok,true);assert.equal(requests.length,2);assert.equal(storage.state.lastSync,lastGood);assert.deepEqual(storage.state.entries,entries);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);
+  await startupListener();await alarmListener({name:'gab-sync'});assert.equal(requests.length,2);
+  clock+=1000;assert.equal((await send({type:'SYNC'})).ok,true);assert.equal(requests.length,3);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);assert.equal(posts().length,0);
+});
+
+test('explicitly adding a subscription immediately fetches only that source without delaying the monthly schedule',async()=>{
+  reset();storage={state:createInitialState()};const deadline=storage.state.nextAutoSyncAt;
+  const url='https://raw.githubusercontent.com/fixture/optional/main/list.json';
+  fetchHook=async call=>call.url===url?json({schema:'guga-blocklist/v1',entries:[{handle:'optional',id:TARGET}]}):undefined;
+  const result=await send({type:'ADD_SUBSCRIPTION',url,name:'Optional'});assert.equal(result.ok,true);
+  assert.deepEqual(requests.map(call=>[call.url,call.method]),[[url,'GET']]);assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.lastSyncAttemptAt,null);
+  assert.equal(storage.state.subscriptions.length,2);assert.equal(storage.state.entries.length,524);assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(posts().length,0);
 });

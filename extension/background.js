@@ -1,4 +1,4 @@
-import {SCHEMA,MAX_BYTES,MAX_ENTRIES,now,uid,initialState,installOfficialSubscription,normalizeHandle,safeEvidence,parseImport,mergeLocal,effectiveEntries,enqueueApproved,reconcileQueue,recordBlocked,retryFailed,retainAllowlistIdentities,csvExport,subscriptionURL,accountKey,jobAccountKey} from './lib/core.js';
+import {SCHEMA,MAX_BYTES,MAX_ENTRIES,SUBSCRIPTION_REFRESH_MS,now,uid,initialState,installOfficialSubscription,initializeSubscriptionSchedule,normalizeHandle,safeEvidence,parseImport,mergeLocal,effectiveEntries,enqueueApproved,reconcileQueue,recordBlocked,retryFailed,retainAllowlistIdentities,csvExport,subscriptionURL,accountKey,jobAccountKey} from './lib/core.js';
 import {createXApiAdapter, XApiError} from './lib/x-api.js';
 import {createXSessionProvider} from './lib/x-session.js';
 import {prepareStorage,stateBytes,RECOVERY_BUDGET} from './lib/storage-budget.js';
@@ -21,8 +21,9 @@ function resetInterruptedSession(state) {
 async function readState() {
   const {state}=await chrome.storage.local.get('state');
   const defaults=initialState();
-  const result=state ? {...defaults,...state,entries:state.entries??[],subscriptions:state.subscriptions??[],officialListVersion:state.officialListVersion,settings:{...defaults.settings,...state.settings}} : defaults;
+  const result=state ? {...defaults,...state,entries:state.entries??[],subscriptions:state.subscriptions??[],officialListVersion:state.officialListVersion,nextAutoSyncAt:state.nextAutoSyncAt,settings:{...defaults.settings,...state.settings}} : defaults;
   if(state)installOfficialSubscription(result);
+  initializeSubscriptionSchedule(result);
   if(state&&state.executorVersion!=='x-api-v1'){
     result.executorVersion='x-api-v1';result.version=2;
     result.settings.accountId='';result.settings.sessionInvalid=true;result.settings.autoBlock=false;
@@ -40,8 +41,14 @@ function mutate(fn, {critical=false}={}) {
 }
 function log(state,action,handle='',message='') {state.logs.unshift({at:now(),action,handle,message:String(message).slice(0,500)});state.logs=state.logs.slice(0,1000);}
 async function schedule(delay=30000) {await chrome.alarms.create('gab-queue',{when:Date.now()+Math.max(30000,delay)});}
+async function scheduleSubscriptionRefresh() {
+  const state=await readState();
+  // Replace any old six-hour repeating alarm. Durable state, not the alarm's
+  // existence or firing frequency, decides whether a network request is due.
+  await chrome.alarms.create('gab-sync',{when:Math.max(Date.now()+30000,state.nextAutoSyncAt)});
+}
 async function setup() {
-  if(!await chrome.alarms.get('gab-sync')) await chrome.alarms.create('gab-sync',{periodInMinutes:360});
+  await scheduleSubscriptionRefresh();
   // A periodic watchdog detects interrupted API writes without replaying them.
   if(!await chrome.alarms.get('gab-watchdog')) await chrome.alarms.create('gab-watchdog',{periodInMinutes:1});
 }
@@ -62,8 +69,8 @@ async function initializeSession() {
 const ready=initializeSession();
 // Register handlers synchronously; await initialization inside each handler.
 ready.catch(error=>console.error('Guga initialization failed:',error.message));
-chrome.runtime.onInstalled.addListener(()=>ready.then(async()=>{await setup();await syncAll();}).catch(error=>console.error('Guga subscription refresh failed:',error.message)));
-chrome.runtime.onStartup.addListener(()=>ready.then(async()=>{await setup();await schedule();await syncAll();}).catch(error=>console.error('Guga subscription refresh failed:',error.message)));
+chrome.runtime.onInstalled.addListener(()=>ready.then(async()=>{await setup();await syncAll({automatic:true});}).catch(error=>console.error('Guga subscription refresh failed:',error.message)));
+chrome.runtime.onStartup.addListener(()=>ready.then(async()=>{await setup();await schedule();await syncAll({automatic:true});}).catch(error=>console.error('Guga subscription refresh failed:',error.message)));
 
 function validateXTab(tab,state,path) {
   let url;try{url=new URL(tab?.url);}catch{}
@@ -115,9 +122,22 @@ async function syncOne(id) {
     });
   } catch(err) {await mutate(state=>{const live=state.subscriptions.find(s=>s.id===id);if(live)live.error=err.message;log(state,'subscription-error','',err.message);});}
 }
-async function syncAll() {
+async function syncAll({automatic=false}={}) {
   if(syncing)return;syncing=true;
-  try{const state=await readState();for(const sub of state.subscriptions.filter(s=>s.enabled))await syncOne(sub.id);}finally{syncing=false;}
+  try {
+    const result=await mutate(state=>{
+      const timestamp=Date.now();
+      if(automatic&&timestamp<state.nextAutoSyncAt)return {due:false};
+      // Reserve the next date before networking. Failed or interrupted attempts
+      // must not retry on every alarm/startup; manual refresh can still retry.
+      state.lastSyncAttemptAt=new Date(timestamp).toISOString();
+      state.nextAutoSyncAt=timestamp+SUBSCRIPTION_REFRESH_MS;
+      return {due:true};
+    },{critical:true});
+    if(!result.due)return;
+    await scheduleSubscriptionRefresh();
+    for(const sub of result.state.subscriptions.filter(s=>s.enabled))await syncOne(sub.id);
+  } finally {syncing=false;await scheduleSubscriptionRefresh();}
   await pump();
 }
 
@@ -292,9 +312,8 @@ async function handle(message,sender) {
           // Reconnecting cannot erase a persisted budget or rate-limit deadline.
           budgetWrites(state);reconcileQueue(state);log(state,'account-connected',account);
         });
-        // The bundled/last good list is immediately available. A slow GitHub
-        // refresh must not delay a verified connection or require an open popup.
-        void syncAll().catch(error=>console.error('Guga subscription refresh failed:',error.message));
+        // Connection uses the bundled/last good list. It never refreshes GitHub;
+        // the persisted monthly deadline and explicit refresh control own that.
         return result;
       }catch(error){
         await mutate(state=>{if(state.lastConnection?.requestId===requestId){state.lastConnection={...state.lastConnection,status:'failed',at:now(),error:errorText(error)};state.paused=true;state.settings.autoBlock=false;state.settings.sessionInvalid=true;state.pauseReason=state.lastConnection.error;if(error.kind==='rate_limit')noteCooldown(state,'rate_limit',error.retryAt);else if(['auth','account_changed'].includes(error.kind))noteCooldown(state,'auth',Date.now()+60000);}});
@@ -346,7 +365,7 @@ async function handle(message,sender) {
   }
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:errorText(err)}));return true;});
-chrome.alarms.onAlarm.addListener(alarm=>ready.then(()=>{if(alarm.name==='gab-sync')return syncAll();if(['gab-queue','gab-watchdog'].includes(alarm.name))return pump();}));
+chrome.alarms.onAlarm.addListener(alarm=>ready.then(()=>{if(alarm.name==='gab-sync')return syncAll({automatic:true});if(['gab-queue','gab-watchdog'].includes(alarm.name))return pump();}));
 chrome.cookies?.onChanged?.addListener(change=>{
   if(!['twid','ct0'].includes(change.cookie?.name)||!['x.com','.x.com'].includes(change.cookie?.domain))return;
   void ready.then(async()=>{

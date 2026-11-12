@@ -1,6 +1,6 @@
 # Privacy · 隐私 · プライバシー
 
-Version 0.2.3 preview · 2026-11-12
+Version 0.2.4 preview · 2026-11-12
 
 **Popup drafts:** management form drafts and navigation are retained in extension `storage.session` for the current browser session. Drafts stay in this browser and are not published. Connection outcomes are retained in local extension state so closing the popup does not hide a failed attempt.
 
@@ -12,7 +12,9 @@ Version 0.2.3 preview · 2026-11-12
 
 **Import behavior:** local imports become enabled without a separate review step; explicitly re-importing matching disabled entries enables them again. Importing does not enable the global automatic-blocking switch, resume a paused queue, remove exceptions or upload entries. When automatic blocking is already enabled and the queue is running, eligible imported entries with numeric IDs can be processed using the connected X account.
 
-**Read-only subscriptions:** the official subscription is enabled by default, includes a packaged starting copy, and requires GitHub Raw read permission for updates. The extension reads it and any additional public JSON URLs without credentials. It has no GitHub write or public-list upload feature, does not accept a PAT, and does not send local entries to maintainers. GitHub receives normal request information, such as your IP address. Only maintainers with repository write access can publish changes.
+**Read-only subscriptions:** the official subscription is enabled by default, includes a packaged starting copy, and requires GitHub Raw read permission for updates. The extension reads it and any additional public JSON URLs without credentials. It has no GitHub write or public-list upload feature, does not accept a PAT, and does not send local entries to maintainers. Subscription hosts receive normal request information, such as the outbound IP address. Only maintainers with repository write access can publish changes.
+
+**Subscription request frequency:** a fresh installation uses the packaged 523-account list without an immediate GitHub fetch. Automatic refresh uses a locally persisted 30-day deadline; browser restart, extension reload and X connection do not trigger a fetch before it is due. Older installations migrate from saved `lastSync` plus 30 days. Manual refresh and actively adding a subscription fetch immediately; manual refresh moves the next automatic deadline to 30 days later. A failed fetch retains the cached list and waits 30 days for another automatic attempt. This reduces requests, not the visibility of the outbound IP address. New list changes may arrive a month later, or longer while offline or after failures. It does not change the separate X request interval.
 
 **Published starting list:** the owner authorized sharing 523 imported blocking preferences as public handle/ID pairs. These are not independently verified findings of abuse, and no reasons or evidence have been fabricated. The selected public pairs are included in the repository and package; original working exports, private notes, settings and session data are not included. Subscriber imports and edits remain local.
 
@@ -28,7 +30,9 @@ Version 0.2.3 preview · 2026-11-12
 
 本地导入后直接启用，无需额外审核；主动重新导入匹配的已停用条目会重新启用。导入不会打开全局自动拉黑开关、恢复暂停队列、移除例外或上传条目。若自动拉黑已开启且队列正在运行，带数字 ID 并符合条件的导入条目可以通过已连接的 X 账号自动处理。
 
-官方订阅默认启用，附带初始名单副本，并需要 GitHub Raw 读取权限获取更新。它和额外添加的公开 JSON 都通过不带认证信息的请求读取。扩展没有 GitHub 写入、公共名单上传功能，不接收 PAT，也不把本地条目发送给维护者。GitHub 会收到 IP 地址等普通请求信息；只有有仓库写权限的维护者能够发布修改。
+官方订阅默认启用，附带初始名单副本，并需要 GitHub Raw 读取权限获取更新。它和额外添加的公开 JSON 都通过不带认证信息的请求读取。扩展没有 GitHub 写入、公共名单上传功能，不接收 PAT，也不把本地条目发送给维护者。订阅主机会收到出口 IP 等普通请求信息；只有有仓库写权限的维护者能够发布修改。
+
+首次安装使用包内 523 条名单，不立即请求 GitHub。自动刷新按本地持久保存的 30 天期限执行；未到期时，重启浏览器、重载扩展和连接 X 不会触发订阅请求。旧版按已保存的 `lastSync` 加 30 天迁移。手动刷新和主动添加订阅立即联网，手动刷新将下一次自动期限推迟到 30 天后。请求失败保留缓存，30 天后再自动尝试。这减少请求次数，不隐藏出口 IP；新名单变更可能延迟一个月，离线或请求失败时更久。X 请求的独立间隔不受影响。
 
 名单所有者已授权将 523 条导入屏蔽偏好以公开用户名/数字 ID 对分享。这不代表已独立核实虐待行为，不补写或编造理由、证据。选定的公开字段包含在仓库和安装包中，原始工作导出、私人备注、设置和会话数据不包含在内。订阅者的导入和编辑仍留在本地。
 
@@ -46,7 +50,9 @@ Version 0.2.3 preview · 2026-11-12
 
 ローカル取り込みは別の確認操作なしで有効になり、明示的な再取り込みは一致する無効項目も再び有効にします。取り込みは自動ブロックの全体設定をオンにせず、一時停止の解除、例外の削除、アップロードも行いません。自動ブロックがオンで待機列が動いていれば、数値 ID があり条件を満たす項目を接続中の X アカウントで自動処理できます。
 
-公式購読は初めから有効で初期リストを同梱し、更新のため GitHub Raw の読み取り権限が必要です。公式および追加の公開 JSON は認証情報なしで取得します。GitHub 書き込みや公開リストのアップロード機能はなく、PAT を受け付けず、ローカル項目を管理者に送りません。GitHub には IP アドレスなど通常の通信情報が届きます。書き込み権限を持つ管理者だけが変更を公開できます。
+公式購読は初めから有効で初期リストを同梱し、更新のため GitHub Raw の読み取り権限が必要です。公式および追加の公開 JSON は認証情報なしで取得します。GitHub 書き込みや公開リストのアップロード機能はなく、PAT を受け付けず、ローカル項目を管理者に送りません。購読先には出口 IP など通常の通信情報が届きます。書き込み権限を持つ管理者だけが変更を公開できます。
+
+初回は同梱の 523 件を使い、すぐに GitHub へ取得リクエストを送りません。自動更新はローカルに保存した 30 日の期限に従い、期限前のブラウザー再起動・拡張機能の再読み込み・X 接続では取得しません。旧バージョンでは保存済みの `lastSync` の 30 日後を期限にします。手動更新と購読の新規追加ではすぐに通信し、手動更新は次の自動期限を 30 日後に延ばします。取得失敗時はキャッシュを維持し、30 日後に自動再試行します。リクエスト回数を減らす機能で、出口 IP は隠しません。新しい変更の反映は約 1 か月、オフラインや失敗時にはさらに遅れる場合があります。X リクエストの別の間隔は変わりません。
 
 所有者は、取り込んだ 523 件のブロック設定を公開ユーザー名・数値 ID の組として共有することを許可しています。虐待行為が独立に確認されたという意味ではなく、理由や根拠は作成・捏造していません。選択した公開項目をリポジトリとパッケージに含め、元の作業用エクスポート、非公開メモ、設定、セッション情報は含めません。購読者の取り込みや編集はローカルに保存されます。
 

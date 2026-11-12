@@ -242,6 +242,10 @@ function renderLibrary() {
 }
 function renderSubscriptions() {
   const subscriptions = state.subscriptions || [];
+  const nextSync = state.nextAutoSyncAt;
+  const nextSyncNote = $('next-auto-sync');
+  nextSyncNote.hidden = !Number.isFinite(nextSync) || nextSync <= 0;
+  nextSyncNote.textContent = nextSyncNote.hidden ? '' : t('nextAutoSync', {date: dateText(nextSync)});
   const fragment = document.createDocumentFragment();
   for (const sub of subscriptions) {
     const official = isOfficialSubscription(sub);

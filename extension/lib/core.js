@@ -3,6 +3,7 @@ import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_SUBSCRIPTION
 export const SCHEMA = 'guga-blocklist/v1';
 export const MAX_ENTRIES = 20000;
 export const MAX_BYTES = 4 * 1024 * 1024;
+export const SUBSCRIPTION_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
 export const now = () => new Date().toISOString();
 export const uid = () => crypto.randomUUID();
 const reserved = new Set(['home','explore','notifications','messages','settings','search','compose','intent','i','login','logout','signup','tos','privacy']);
@@ -91,7 +92,17 @@ export function parseImport(text, {source='local', status='approved', strictPubl
 export function initialState() {
   const state={version:2,executorVersion:'x-api-v1',settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',accountId:'',sessionInvalid:false,intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],allowlistPins:{},queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{},apiCooldown:null,apiBudget:{accountId:'',writes:[]}};
   installOfficialSubscription(state);
+  initializeSubscriptionSchedule(state);
   return state;
+}
+
+export function initializeSubscriptionSchedule(state, timestamp=Date.now()) {
+  if(Number.isFinite(state.nextAutoSyncAt)&&state.nextAutoSyncAt>0&&state.nextAutoSyncAt<=8.64e15)return false;
+  const lastSync=typeof state.lastSync==='string'?Date.parse(state.lastSync):NaN;
+  const base=Number.isFinite(lastSync)&&lastSync>0&&lastSync<=8.64e15-SUBSCRIPTION_REFRESH_MS?lastSync:timestamp;
+  state.nextAutoSyncAt=base+SUBSCRIPTION_REFRESH_MS;
+  state.lastSyncAttemptAt??=null;
+  return true;
 }
 
 export function installOfficialSubscription(state) {

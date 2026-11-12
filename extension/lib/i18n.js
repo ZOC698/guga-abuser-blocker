@@ -255,7 +255,9 @@ export const messages = {
     "includedListDisabled": "The official Guga subscription is currently disabled. Your saved subscription choices are preserved.",
     "chooseListHelp": "No official subscription is active. Import a list or add a subscription of your choice.",
     "officialReadyDesc": "The official Guga list is ready. Connect your X session and turn on automatic blocking. Your exceptions and pause setting remain in effect.",
-    "cachedListKept": "The saved list of {count} accounts has been retained. Subscription, pause and exception settings still apply."
+    "cachedListKept": "The saved list of {count} accounts has been retained. Subscription, pause and exception settings still apply.",
+    "subscriptionSchedule": "Installation uses the included list. Subscriptions update automatically every 30 days; opening the browser or connecting X does not refresh them early. Refresh all connects immediately to update them.",
+    "nextAutoSync": "Next automatic update: {date}"
   },
   "zh": {
     "workspace": "我的空间",
@@ -513,7 +515,9 @@ export const messages = {
     "includedListDisabled": "Guga 官方订阅当前已停用，已保存的订阅选择会保留。",
     "chooseListHelp": "目前没有启用的官方订阅，可以导入名单或添加你选择的订阅。",
     "officialReadyDesc": "Guga 官方名单已准备好。连接 X 会话并开启自动拉黑即可使用，白名单例外和暂停设置始终有效。",
-    "cachedListKept": "已保留保存的 {count} 个账号。订阅启停、暂停和白名单例外设置仍然有效。"
+    "cachedListKept": "已保留保存的 {count} 个账号。订阅启停、暂停和白名单例外设置仍然有效。",
+    "subscriptionSchedule": "安装后使用内置名单，每 30 天自动更新订阅。启动浏览器或连接 X 不会提前联网获取名单；「刷新全部」仍会立即联网更新。",
+    "nextAutoSync": "下次自动更新：{date}"
   },
   "ja": {
     "workspace": "マイスペース",
@@ -771,7 +775,9 @@ export const messages = {
     "includedListDisabled": "Guga 公式リストの購読は現在無効です。保存された購読設定を維持しています。",
     "chooseListHelp": "有効な公式購読はありません。リストを読み込むか、好みの購読を追加できます。",
     "officialReadyDesc": "Guga 公式リストは準備済みです。X セッションに接続して自動ブロックを有効にしてください。例外と一時停止設定は維持されます。",
-    "cachedListKept": "保存済みの {count} アカウントを保持しています。購読の有効・無効、一時停止、例外の設定は引き続き適用されます。"
+    "cachedListKept": "保存済みの {count} アカウントを保持しています。購読の有効・無効、一時停止、例外の設定は引き続き適用されます。",
+    "subscriptionSchedule": "インストール後は付属のリストを使用し、購読は 30 日ごとに自動更新します。ブラウザーの起動や X への接続で更新が早まることはありません。「すべて更新」はその場で通信して更新します。",
+    "nextAutoSync": "次回の自動更新：{date}"
   }
 };
 let current = 'en';

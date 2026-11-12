@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.2.3 preview
+# Guga Abuser Blocker · 0.2.4 preview
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
@@ -20,13 +20,17 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 1. Extract the extension package and keep its folder. Open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, and load the **extension** folder containing `manifest.json` directly.
 2. Sign in to X in this browser profile. Click the extension toolbar icon to open all five management panels inside the popup.
-3. The official subscription is already enabled and includes a packaged starting list. Installation requests read access to `raw.githubusercontent.com` for updates; there is no list URL to paste. Subscribers need no terminal, Codex, GitHub account, PAT or X developer API key.
+3. The official subscription is already enabled and starts from the packaged 523-account list without immediately fetching GitHub. Installation requests read access to `raw.githubusercontent.com` for later updates; there is no list URL to paste. Subscribers need no terminal, Codex, GitHub account, PAT or X developer API key.
 4. Choose **Connect X session**. The background checks the signed-in browser session and binds its numeric account ID. **After upgrading from 0.1.x, reconnect before enabling blocking.** This is not developer OAuth authorization.
 5. Enable **Automatic X blocking**. Enabled entries with numeric IDs enter the background queue. Keep the browser running; a dedicated X profile tab is no longer needed. The default request interval is at least 30 seconds, adjustable up to 300 seconds.
 
 The session must remain signed in. Account/session changes or authentication failures require reconnecting. A rate limit, request budget or network delay can create a persistent cooldown shown in the popup; closing the popup or restarting the worker does not bypass it.
 
-Requires Chromium 120 or later. This is a developer-load preview; real-X compatibility has not been established across Chrome and Edge environments. Subscription refresh runs manually or approximately every six hours while the browser can run. Sleep, shutdown and scheduling can delay work. After updating files, reload the extension and refresh X tabs for content hiding.
+Requires Chromium 120 or later. This is a developer-load preview; real-X compatibility has not been established across Chrome and Edge environments. After updating files, reload the extension and refresh X tabs for content hiding.
+
+Subscriptions refresh automatically every **30 days**, using a deadline saved in local extension storage. A fresh installation starts that period with its packaged list. Restarting the browser, reloading the extension or connecting X does not fetch subscriptions before the deadline. Upgrading an older installation schedules the next refresh 30 days after its saved `lastSync`. Sleep, shutdown and scheduling can delay a due refresh.
+
+**Refresh now** and actively adding a subscription fetch immediately. A manual refresh moves the next automatic deadline to 30 days later. A failed refresh keeps the cached list and schedules the next automatic attempt 30 days later; you can retry manually sooner. This reduces subscription requests but does not hide the outbound IP address from GitHub or another subscription host. Newly published list changes may take a month to reach automatic subscribers, or longer if the browser is offline or a fetch fails. X blocking requests keep their separate interval described above.
 
 ## Your private library
 
@@ -40,7 +44,7 @@ Private JSON and CSV downloads contain local entries only, not all settings, sub
 
 ## Blocking and current limits
 
-Version 0.2.3 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
+Version 0.2.4 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
 
 Every native block requires an existing numeric target ID. A handle-only enabled entry waits as **Needs numeric ID**, without sending a block request. Add an ID to a local entry, or wait for the subscription maintainer to supply it. No automatic handle-to-ID lookup is performed by the queue. IDs and the connected numeric account identity are checked around execution; content hiding still matches handles.
 

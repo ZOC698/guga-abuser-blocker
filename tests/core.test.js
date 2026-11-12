@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {initialState as createInitialState,installOfficialSubscription,normalizeHandle,normalizeEntry,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
+import {initialState as createInitialState,installOfficialSubscription,initializeSubscriptionSchedule,SUBSCRIPTION_REFRESH_MS,normalizeHandle,normalizeEntry,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
 import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_LIST_VERSION,OFFICIAL_SEED} from '../extension/lib/official-list.js';
 
 // Most identity cases intentionally exercise only their synthetic targets.
@@ -8,8 +8,26 @@ const initialState=()=>({...createInitialState(),entries:[],subscriptions:[]});
 
 const entry=(handle,extra={})=>({handle,source:'local',status:'approved',reason:'',evidence:[],...extra});
 
+test('subscription schedule uses 30 days and preserves its persisted deadline through migration',()=>{
+  assert.equal(SUBSCRIPTION_REFRESH_MS,30*24*60*60*1000);
+  const timestamp=Date.parse('2026-11-12T00:00:00Z');
+  for(const lastSync of [null,undefined,'invalid']){
+    const state={lastSync};assert.equal(initializeSubscriptionSchedule(state,timestamp),true);
+    assert.equal(state.nextAutoSyncAt,timestamp+SUBSCRIPTION_REFRESH_MS);assert.equal(state.lastSyncAttemptAt,null);
+    assert.equal(initializeSubscriptionSchedule(state,timestamp+100000),false);assert.equal(state.nextAutoSyncAt,timestamp+SUBSCRIPTION_REFRESH_MS);
+  }
+  const old={lastSync:'2026-11-01T00:00:00Z'};initializeSubscriptionSchedule(old,timestamp);
+  assert.equal(old.nextAutoSyncAt,Date.parse(old.lastSync)+SUBSCRIPTION_REFRESH_MS);
+  const due={lastSync:'2026-09-01T00:00:00Z'};initializeSubscriptionSchedule(due,timestamp);
+  assert.ok(due.nextAutoSyncAt<timestamp,'An overdue migration stays due instead of postponing another month');
+  const reserved={nextAutoSyncAt:timestamp+123,lastSyncAttemptAt:'2026-11-11T00:00:00Z',lastSync:'2020-01-01T00:00:00Z'};
+  const before=structuredClone(reserved);assert.equal(initializeSubscriptionSchedule(reserved,timestamp+1000),false);assert.deepEqual(reserved,before);
+});
+
 test('fresh state includes the official numeric seed but no execution consent or jobs',()=>{
+  const before=Date.now();
   const state=createInitialState();
+  assert.ok(state.nextAutoSyncAt>=before+SUBSCRIPTION_REFRESH_MS&&state.nextAutoSyncAt<=Date.now()+SUBSCRIPTION_REFRESH_MS);assert.equal(state.lastSyncAttemptAt,null);
   assert.equal(OFFICIAL_SEED.entries.length,523);assert.equal(state.entries.length,523);
   assert.equal(state.subscriptions.length,1);assert.equal(state.subscriptions[0].id,OFFICIAL_SUBSCRIPTION_ID);
   assert.equal(state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(state.subscriptions[0].enabled,true);assert.equal(state.subscriptions[0].count,523);
