@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const CONTENT_VERSION = '0.2.0';
+  const CONTENT_VERSION = 'filter-projection-v1';
   if (globalThis.__gugaAbuserBlockerLoaded === CONTENT_VERSION) return;
   globalThis.__gugaAbuserBlockerLoaded = CONTENT_VERSION;
 
@@ -12,14 +12,15 @@
     zh: { hidden: '已按你的 Guga 名单隐藏', reveal: '显示此项', stop: '停止采集', scanning: '正在采集页面中的已屏蔽账号', capture: '采集已暂停，尚未核实名单是否完整。' },
     ja: { hidden: 'Guga リストにより非表示', reveal: 'この項目を表示', stop: '収集を停止', scanning: '表示されたブロック済みアカウントを収集中', capture: '収集を一時停止しました。全件取得は未確認です。' }
   };
-  let state = { settings: {}, entries: [], subscriptions: [], allowlist: [] };
+  let filterState = { language: 'en', hideContent: false, handles: [] };
+  let filterRequestSerial = 0;
   let blocked = new Set();
   let sweepTimer = null;
   let capturing = null;
   let lastURL = location.href;
   const hidden = new Map();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const text = () => words[state.settings?.language] || words.en;
+  const text = () => words[filterState.language] || words.en;
 
   function handle(value) {
     const result = String(value || '').replace(/^@/, '').toLowerCase();
@@ -82,47 +83,26 @@
     return element.getClientRects().length > 0;
   }
 
-  function enabledEntry(entry, current = state) {
-    if (!entry || entry.status !== 'approved' || !handle(entry.handle)) return false;
-    if (entry.source === 'local') return true;
-    return (current.subscriptions || []).some(source => source.id === entry.source && source.enabled);
-  }
-
-  function allowed(current, target) {
-    return (current.allowlist || []).some(value => handle(typeof value === 'string' ? value : value.handle) === target);
-  }
-
-  function excludedIds(current) {
-    const own = handle(current.settings?.accountHandle);
-    const ids = new Set((current.entries || [])
-      .filter(entry => entry.id && (allowed(current, handle(entry.handle)) || handle(entry.handle) === own))
-      .map(entry => String(entry.id)));
-    const ownId = current.settings?.accountId;
-    if (typeof ownId === 'string' && /^\d{1,25}$/.test(ownId)) ids.add(ownId);
-    const pins = current.allowlistPins;
-    if (pins && typeof pins === 'object' && !Array.isArray(pins)) {
-      for (const value of current.allowlist || []) {
-        const alias = handle(typeof value === 'string' ? value : value.handle);
-        if (!alias || !Object.hasOwn(pins, alias) || !Array.isArray(pins[alias])) continue;
-        for (const id of pins[alias]) if (typeof id === 'string' && /^\d{1,25}$/.test(id)) ids.add(id);
-      }
-    }
-    return ids;
-  }
-
-  function eligibleEntries(current) {
-    const own = handle(current.settings?.accountHandle);
-    const excluded = excludedIds(current);
-    // Keep the core queue's identity-wide exceptions when an account has aliases.
-    return (current.entries || []).filter(entry => enabledEntry(entry, current) &&
-      !allowed(current, handle(entry.handle)) && handle(entry.handle) !== own &&
-      (!entry.id || !excluded.has(String(entry.id))));
-  }
-
-  function applyState(next) {
-    state = next || { settings: {}, entries: [], subscriptions: [], allowlist: [] };
-    blocked = new Set(eligibleEntries(state).map(entry => handle(entry.handle)));
+  function applyFilterState(next) {
+    if (!next || typeof next !== 'object' || !Object.hasOwn(words, next.language) ||
+        typeof next.hideContent !== 'boolean' || !Array.isArray(next.handles) || next.handles.length > 20000 ||
+        next.handles.some(value => typeof value !== 'string' || handle(value) !== value)) return false;
+    // Only the minimum filtering projection enters this page. Complete account
+    // records, IDs, exceptions, queues and session information stay in the worker.
+    filterState = { language: next.language, hideContent: next.hideContent, handles: [...next.handles] };
+    blocked = new Set(filterState.handles);
     scheduleSweep();
+    return true;
+  }
+
+  async function refreshFilterState() {
+    const serial = ++filterRequestSerial;
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'GET_FILTER_STATE' });
+      if (serial === filterRequestSerial && result?.ok === true) applyFilterState(result.filterState);
+    } catch {
+      // A failed read must not erase the last successfully loaded protection.
+    }
   }
 
   function cellHandle(cell) {
@@ -161,7 +141,7 @@
       restore(element, record);
       record = null;
     }
-    if (!author || !blocked.has(author) || state.settings?.hideContent === false) {
+    if (!author || !blocked.has(author) || !filterState.hideContent) {
       if (record) restore(element, record);
       return;
     }
@@ -199,7 +179,7 @@
     sweepTimer = null;
     const capturePage = /^\/settings\/blocked(?:\/|$)/.test(location.pathname);
     for (const [element, record] of hidden) {
-      if (!element.isConnected || capturePage || state.settings?.hideContent === false) restore(element, record);
+      if (!element.isConnected || capturePage || !filterState.hideContent) restore(element, record);
     }
     if (capturePage) return;
     for (const tweet of document.querySelectorAll('article[data-testid="tweet"]')) {
@@ -310,8 +290,14 @@
   }
 
   chrome.runtime.onMessage.addListener((request, sender, respond) => {
-    if (sender.id && sender.id !== chrome.runtime.id) return false;
+    if (sender.id !== chrome.runtime.id) return false;
     if (!request || typeof request.type !== 'string') return false;
+    if (request.type === 'GAB_FILTER_STATE') {
+      const applied = applyFilterState(request.filterState);
+      if (applied) filterRequestSerial++;
+      respond({ ok: applied });
+      return false;
+    }
     if (request.type === 'GAB_IDENTITY') {
       readyIdentity().then(accountHandle => respond({ ok: true, accountHandle }))
         .catch(error => respond({ ok: false, error: error.message }));
@@ -337,9 +323,9 @@
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.state) applyState(changes.state.newValue);
+    if (area === 'local' && Object.hasOwn(changes, 'gabStateRevision')) void refreshFilterState();
   });
-  chrome.storage.local.get('state').then(result => applyState(result.state)).catch(() => {});
+  void refreshFilterState();
   new MutationObserver(() => {
     if (location.href !== lastURL) { lastURL = location.href; }
     scheduleSweep();

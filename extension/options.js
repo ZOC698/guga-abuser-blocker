@@ -8,6 +8,10 @@ const $ = (id) => document.getElementById(id);
 const PAGE_SIZE = 50;
 const OFFICIAL_SUBSCRIPTION_URL = 'https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blocklist.json';
 let state = { settings: {}, entries: [], subscriptions: [], allowlist: [], queue: [], logs: [], capture: { entries: [] } };
+let hasLoadedState = false;
+let stateReadError = '';
+let stateRefreshRunning = false;
+let stateRefreshPending = false;
 let page = 0;
 let selected = new Set();
 let currentPanel = 'overview';
@@ -26,6 +30,11 @@ const busyActions = new Set();
 const draftFields = ['import-text', 'search', 'status-filter', 'export-kind', 'sub-name', 'sub-url', 'allow-handle', 'interval'];
 const requestedPanel = location.hash.slice(1);
 if (compact) document.querySelector('.app-shell').inert = true;
+const stateReadNotice = document.createElement('p');
+stateReadNotice.id = 'state-read-status';
+stateReadNotice.className = 'notice';
+stateReadNotice.setAttribute('role', 'status');
+document.querySelector('.topbar').insertAdjacentElement('afterend', stateReadNotice);
 
 function draftSnapshot() {
   const fields = Object.fromEntries(draftFields.map((id) => [id, $(id).value]));
@@ -81,11 +90,34 @@ function toast(message, error = false) {
   toastTimer = setTimeout(() => { node.hidden = true; }, error ? 13000 : 5000);
 }
 async function request(type, payload = {}) {
-  if (!globalThis.chrome?.runtime?.sendMessage) throw new Error(t('extensionUnavailable'));
-  const result = await chrome.runtime.sendMessage({ type, ...payload });
-  if (!result?.ok) throw new Error(result?.error || t('extensionUnavailable'));
-  if (result.state) { state = result.state; render(); }
-  return result;
+  try {
+    if (!globalThis.chrome?.runtime?.sendMessage) throw new Error(t('extensionUnavailable'));
+    const result = await chrome.runtime.sendMessage({ type, ...payload });
+    if (!result?.ok) { const error = new Error(result?.error || t('extensionUnavailable')); error.code = result?.code; throw error; }
+    if (type === 'GET_STATE' && (!result.state || typeof result.state !== 'object')) throw new Error(t('libraryReadFailed'));
+    if (result.state) { state = result.state; hasLoadedState = true; stateReadError = ''; render(); }
+    return result;
+  } catch (error) {
+    if (type === 'GET_STATE' || error?.code === 'STATE_STORAGE') { stateReadError = error?.message || String(error); renderStateReadStatus(); }
+    throw error;
+  }
+}
+function renderStateReadStatus() {
+  stateReadNotice.hidden = hasLoadedState && !stateReadError;
+  stateReadNotice.setAttribute('role', stateReadError ? 'alert' : 'status');
+  stateReadNotice.textContent = stateReadError ? `${t(hasLoadedState ? 'libraryReadFailedCached' : 'libraryReadFailed')} ${stateReadError}` : hasLoadedState ? '' : t('loading');
+  for (const panel of document.querySelectorAll('.panel')) panel.hidden = !hasLoadedState || panel.id !== `panel-${currentPanel}`;
+}
+async function refreshStateAfterRevision() {
+  stateRefreshPending = true;
+  if (stateRefreshRunning) return;
+  stateRefreshRunning = true;
+  try {
+    while (stateRefreshPending) {
+      stateRefreshPending = false;
+      try { await request('GET_STATE'); } catch { /* Keep the last successful view and the persistent read error. */ }
+    }
+  } finally { stateRefreshRunning = false; }
 }
 async function action(task, button) {
   const key = button?.id || button?.form?.id;
@@ -101,7 +133,7 @@ function switchPanel(name) {
   if (!['overview', 'library', 'subscriptions', 'activity', 'settings'].includes(name)) name = 'overview';
   if (compact && !restoringDraft) panelScroll[currentPanel] = document.querySelector('.main').scrollTop;
   currentPanel = name;
-  document.querySelectorAll('.panel').forEach((node) => { node.hidden = node.id !== `panel-${name}`; });
+  document.querySelectorAll('.panel').forEach((node) => { node.hidden = !hasLoadedState || node.id !== `panel-${name}`; });
   document.querySelectorAll('[data-panel]').forEach((node) => { node.classList.toggle('active', node.dataset.panel === name); node.setAttribute('aria-current', node.dataset.panel === name ? 'page' : 'false'); });
   history.replaceState(null, '', `#${name}`);
   if (compact) document.querySelector('.main').scrollTop = panelScroll[name] || 0;
@@ -132,6 +164,7 @@ function filteredEntries() {
 function render() {
   setLanguage(state.settings?.language || 'en');
   translatePage();
+  renderStateReadStatus();
   $('language').value = state.settings?.language || 'en';
   renderOverview(); renderLibrary(); renderSubscriptions(); renderActivity(); renderSettings(); renderConnectionStatus(); renderApiStatus();
   const capture = state.capture || {};
@@ -396,9 +429,10 @@ $('entry-form').addEventListener('submit', (event) => {
     toast(t(identityChanged ? 'idCorrectionDisabled' : 'saved'));
   }, event.submitter);
 });
-if (globalThis.chrome?.storage?.onChanged) chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.state?.newValue) { state = changes.state.newValue; render(); } });
+if (globalThis.chrome?.storage?.onChanged) chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && Object.hasOwn(changes, 'gabStateRevision')) void refreshStateAfterRevision(); });
 window.addEventListener('hashchange', () => switchPanel(location.hash.slice(1)));
 switchPanel(requestedPanel);
+renderStateReadStatus();
 if (compact) {
   document.addEventListener('input', (event) => { if (event.target.id === 'interval') intervalDirty = true; saveDraft(); });
   document.addEventListener('change', saveDraft);

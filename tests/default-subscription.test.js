@@ -91,6 +91,9 @@ test('fresh users receive the official subscription and need only connect plus e
     await page.goto(`chrome-extension://${id}/popup.html`);
     await page.waitForFunction(()=>document.querySelector('#stat-approved')?.textContent==='523');
     let state=await read();
+    const initialLocal=await worker.evaluate(()=>chrome.storage.local.get(null));
+    assert.deepEqual(Object.keys(initialLocal),['gabStateRevision'],'Only a non-sensitive revision may remain in storage.local');
+    assert.ok(Number.isSafeInteger(initialLocal.gabStateRevision));
     assert.equal(state.entries.length,523);assert.equal(state.entries.filter(entry=>entry.source==='local').length,0);
     assert.equal(state.subscriptions.length,1);assert.equal(state.subscriptions[0].id,OFFICIAL_SUBSCRIPTION_ID);assert.equal(state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(state.subscriptions[0].enabled,true);
     assert.equal(state.settings.accountId,'');assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);assert.equal(state.queue.length,0);assert.equal(apiCalls.length,0);
@@ -134,6 +137,9 @@ test('fresh users receive the official subscription and need only connect plus e
     await page.locator('#auto-block').uncheck();
     await waitForState(state=>!state.settings.autoBlock&&state.paused);
     state=await read();assert.equal(state.queue.filter(job=>job.status==='done').length,1);assert.equal(state.queue.filter(job=>job.status==='pending').length,522);
+    const completedLocal=await worker.evaluate(()=>chrome.storage.local.get(null));
+    assert.deepEqual(Object.keys(completedLocal),['gabStateRevision'],'Bound account, queue and history must not be persisted in plaintext');
+    assert.ok(completedLocal.gabStateRevision>initialLocal.gabStateRevision);
     assert.ok(state.nativeBlocked[`id:${accountId}`][`id:${target.id}`]);assert.equal(blockRequests,1);assert.equal(relationshipReads,2);assert.equal(githubRequests,0,'The packaged list supports the complete blocking flow without GitHub');
     assert.deepEqual(apiCalls,[{method:'GET',path:VIEWER_PATH},{method:'GET',path:RELATIONSHIP_PATH},{method:'POST',path:BLOCK_PATH},{method:'GET',path:RELATIONSHIP_PATH}]);
     assert.equal(context.pages().length,pageCount);assert.ok(context.pages().every(candidate=>!/^https?:/.test(candidate.url())));
@@ -156,6 +162,7 @@ test('fresh users receive the official subscription and need only connect plus e
     await fs.writeFile(path.join(outputs,`guga-default-${version}-fixture.json`),JSON.stringify({
       passed:true,version,realUnpackedExtension:true,freshDisposableProfile:true,seededEntries:523,initialLocalEntries:0,
       initialQueueLength:0,initialAutomaticBlocking:false,locales,popupViewport:{width:450,height:580},overflow:false,
+      localStorageContainsOnlyRevision:true,accountQueueHistoryNotInPlaintextLocalStorage:true,
       requiredSetupActions:['connect X','enable automatic blocking'],automaticQueueLength:523,
       confirmedMockBlocks:1,pendingBeforePause:522,relationshipReads,githubRequests,
       githubRequestsBeforeManualRefresh:0,automaticRefreshDays:30,manualRefreshDefersNextAutomatic:true,

@@ -9,7 +9,7 @@ try {
     & node scripts/check.mjs
     if ($LASTEXITCODE -ne 0) { throw 'Extension check failed.' }
     $packageItems = @($extensionDir, (Join-Path $projectDir 'README.md'), (Join-Path $projectDir 'README.en.md'), (Join-Path $projectDir 'README.zh-CN.md'), (Join-Path $projectDir 'README.ja.md'), (Join-Path $projectDir 'PRIVACY.md'), (Join-Path $projectDir 'DATA_FORMAT.md'), (Join-Path $projectDir 'CONTRIBUTING.md'), (Join-Path $projectDir 'VERIFICATION.md'), (Join-Path $projectDir 'lists'))
-    $packageItems += @('schemas', 'scripts', 'tests', 'package.json', 'package-lock.json') | ForEach-Object { Join-Path $projectDir $_ }
+    $packageItems += @('schemas', 'scripts', 'tests', 'store', 'ASSETS.md', 'package.json', 'package-lock.json') | ForEach-Object { Join-Path $projectDir $_ }
     Compress-Archive -Path $packageItems -DestinationPath $zipPath -Force
     $zipStream = [System.IO.File]::OpenRead($zipPath)
     $sha256 = [System.Security.Cryptography.SHA256]::Create()

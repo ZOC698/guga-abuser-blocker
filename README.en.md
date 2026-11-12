@@ -1,6 +1,8 @@
-# Guga Abuser Blocker · 0.2.4 preview
+# Guga Abuser Blocker · 0.2.5 preview
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+
+Version 0.2.5 uses the classic Guga artwork for the toolbar and dashboard, and includes English, Japanese and Simplified Chinese store metadata. The developer ZIP contains an `extension/` folder and documentation; the separate `-chrome-store.zip` contains only runtime files with `manifest.json` at its root. Only the latter is suitable for uploading to the Chrome Web Store. Store preparation is not publication: this version has not yet been uploaded or approved. See [submission materials](store/LISTING.md) and [artwork provenance](ASSETS.md).
 
 A Chrome / Edge extension to reduce exposure to accounts on the Guga community’s maintained block list, with English, Japanese and Chinese interfaces. Coverage follows that list; unlisted accounts may still appear. Subscribe to a maintainer's public list, keep personal exceptions, and enable automatic blocking on your signed-in X account. Local imports and private backups are also supported. Automatic blocking starts off.
 
@@ -44,7 +46,7 @@ Private JSON and CSV downloads contain local entries only, not all settings, sub
 
 ## Blocking and current limits
 
-Version 0.2.4 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
+Version 0.2.5 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
 
 Every native block requires an existing numeric target ID. A handle-only enabled entry waits as **Needs numeric ID**, without sending a block request. Add an ID to a local entry, or wait for the subscription maintainer to supply it. No automatic handle-to-ID lookup is performed by the queue. IDs and the connected numeric account identity are checked around execution; content hiding still matches handles.
 

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { effectiveEntries } from '../extension/lib/core.js';
 
 // Runtime extension has no dependencies. Browser fixtures use a development-only
 // Playwright installation: npm install --no-save playwright, or PLAYWRIGHT_MODULE.
@@ -24,17 +25,32 @@ function initialState() {
 test('X read-only page browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MODULE or install playwright to run browser fixtures.' }, async t => {
   const browser = await playwright.chromium.launch({ headless: true, ...(process.env.GAB_CHROMIUM_PATH ? { executablePath: process.env.GAB_CHROMIUM_PATH } : {}) });
   const pages = [];
+  const fixtures = new WeakMap();
+  async function updateFixture(page, change) {
+    change(fixtures.get(page));
+    await page.evaluate(() => window.__update());
+  }
   async function fixture({ path = '/target_user', state = initialState(), blocked = false, loadedMarker } = {}) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     pages.push(page);
+    const data = { state: structuredClone(state), error: null, override: undefined };
+    fixtures.set(page, data);
     await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><header><nav><a data-testid="AppTabBar_Profile_Link" href="/owner_user">Profile</a></nav><button data-testid="SideNav_AccountSwitcher_Button"><div data-testid="UserAvatar-Container-owner_user" style="width:24px;height:24px"></div></button></header><main><div data-testid="primaryColumn"><div data-testid="UserName">Target @target_user</div><button data-testid="userActions">More</button><button id="follow" data-testid="1234567890123456789-follow">Follow</button></div></main></body></html>' }));
     await page.goto(`https://x.com${path}`);
-    await page.evaluate(({ state, blocked, loadedMarker }) => {
+    await page.exposeFunction('__readFilterProjection', () => {
+      if (data.error) throw new Error(data.error);
+      if (data.override !== undefined) return data.override;
+      return { ok: true, filterState: { language: data.state.settings.language, hideContent: data.state.settings.hideContent !== false, handles: effectiveEntries(data.state).map(entry => entry.handle) } };
+    });
+    await page.evaluate(({ blocked, loadedMarker }) => {
       if (loadedMarker !== undefined) window.__gugaAbuserBlockerLoaded = loadedMarker;
-      window.__state = state;
       window.__listenerRegistrations = 0;
       window.__clicks = [];
       window.__reports = [];
+      window.__requestedTypes = [];
+      window.__receivedProjections = [];
+      window.__localReads = 0;
+      window.__revision = 0;
       window.__switchAccount = account => {
         document.querySelector('[data-testid="AppTabBar_Profile_Link"]').setAttribute('href', `/${account}`);
         document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"] [data-testid^="UserAvatar-Container-"]').dataset.testid = `UserAvatar-Container-${account}`;
@@ -44,27 +60,34 @@ test('X read-only page browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT
           id: 'test-extension',
           onMessage: { addListener(listener) { window.__listenerRegistrations++; window.__listener = listener; } },
           async sendMessage(message) {
+            window.__requestedTypes.push(message.type);
+            if (message.type === 'GET_FILTER_STATE') {
+              const result = await window.__readFilterProjection();
+              if (result?.filterState) window.__receivedProjections.push(result.filterState);
+              return result;
+            }
+            if (message.type === 'GET_STATE') return { ok: false, error: 'Content scripts may not read complete state.' };
             if (message.type === 'CAPTURE_PROGRESS') window.__reports.push(message);
             return { ok: true };
           }
         },
         storage: {
-          local: { async get() { return { state: structuredClone(window.__state) }; } },
+          local: { async get() { window.__localReads++; throw new Error('Content scripts may not read persisted state.'); } },
           onChanged: { addListener(listener) { window.__storageListener = listener; } }
         }
       };
-      window.__send = message => new Promise(resolve => {
+      window.__send = (message, sender = { id: 'test-extension' }) => new Promise(resolve => {
         let responded = false;
-        const keepChannel = window.__listener(message, { id: 'test-extension' }, result => { responded = true; resolve(result); });
+        const keepChannel = window.__listener(message, sender, result => { responded = true; resolve(result); });
         if (keepChannel !== true && !responded) resolve(undefined);
       });
-      window.__update = () => window.__storageListener({ state: { newValue: structuredClone(window.__state) } }, 'local');
+      window.__update = () => window.__storageListener({ gabStateRevision: { newValue: ++window.__revision } }, 'local');
       if (blocked) document.querySelector('#follow').dataset.testid = '1234567890123456789-unblock';
       document.addEventListener('click', event => {
         const control = event.target.closest('[data-testid="userActions"],[data-testid="block"],[data-testid="confirmationSheetConfirm"],[data-testid$="-unblock"]');
         if (control) window.__clicks.push(control.dataset.testid);
       });
-    }, { state, blocked, loadedMarker });
+    }, { blocked, loadedMarker });
     await page.addStyleTag({ content: css });
     await page.addScriptTag({ content: source });
     return page;
@@ -87,18 +110,68 @@ test('X read-only page browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT
           assert.equal(await page.evaluate(request => window.__send(request), { ...request, type, userId: '1234567890123456789' }), undefined, type);
         }
         assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-        assert.deepEqual(await page.evaluate(() => window.__state), initialState());
+        assert.deepEqual(fixtures.get(page).state, initialState());
       }
       assert.equal(/\b(?:nativeBlock|probeProfile|verifyBlock)\b|\.click\s*\(/.test(source), false);
     });
 
     await t.test('an old loaded marker permits the update but the same version cannot register twice', async () => {
       const page = await fixture({ loadedMarker: true });
-      assert.equal(await page.evaluate(() => window.__gugaAbuserBlockerLoaded), '0.2.0');
+      assert.equal(await page.evaluate(() => window.__gugaAbuserBlockerLoaded), 'filter-projection-v1');
       assert.equal(await page.evaluate(() => window.__listenerRegistrations), 1);
       await page.addScriptTag({ content: source });
       assert.equal(await page.evaluate(() => window.__listenerRegistrations), 1);
       assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' });
+    });
+
+    await t.test('content requests only the minimal projection and ignores legacy plaintext state changes', async () => {
+      const page = await fixture();
+      await page.waitForFunction(() => window.__receivedProjections.length === 1);
+      const before = await page.evaluate(() => ({ requests: window.__requestedTypes, reads: window.__localReads, payloads: window.__receivedProjections, hasFullState: Object.hasOwn(window, '__state') }));
+      assert.deepEqual(before.requests, ['GET_FILTER_STATE']);
+      assert.equal(before.reads, 0); assert.equal(before.hasFullState, false);
+      assert.deepEqual(Object.keys(before.payloads[0]).sort(), ['handles', 'hideContent', 'language']);
+      assert.deepEqual(before.payloads[0], {language: 'en', hideContent: true, handles: ['target_user']});
+      assert.equal(JSON.stringify(before.payloads).includes('owner_user'), false);
+      await page.evaluate(() => window.__storageListener({state: {newValue: {settings: {hideContent: false}, entries: []}}}, 'local'));
+      assert.deepEqual(await page.evaluate(() => window.__requestedTypes), ['GET_FILTER_STATE']);
+      await page.evaluate(() => window.__update());
+      await page.waitForFunction(() => window.__requestedTypes.length === 2);
+      assert.deepEqual(await page.evaluate(() => window.__requestedTypes), ['GET_FILTER_STATE', 'GET_FILTER_STATE']);
+      assert.equal(/chrome\.storage\.local\s*\.|type:\s*['"]GET_STATE['"]/.test(source), false);
+    });
+
+    await t.test('failed or malformed projection reads retain the last successful filtering state', async () => {
+      const page = await fixture({path: '/home'});
+      await page.evaluate(() => { document.querySelector('main').innerHTML = '<article id="kept" data-testid="tweet"><div data-testid="User-Name"><a href="/target_user">Target</a></div><div data-testid="tweetText">Still hidden</div></article>'; });
+      await page.waitForSelector('#kept.gab-filtered');
+      await updateFixture(page, data => { data.error = 'Encrypted store cannot be read'; });
+      await page.waitForFunction(() => window.__requestedTypes.length >= 2);
+      await page.waitForTimeout(150);
+      assert.equal(await page.locator('#kept').evaluate(node => node.classList.contains('gab-filtered')), true);
+      await updateFixture(page, data => { data.error = null; data.override = {ok: false, code: 'STATE_STORAGE', error: 'Encrypted store cannot be read'}; });
+      await page.waitForFunction(() => window.__requestedTypes.length >= 3);
+      await page.waitForTimeout(150);
+      assert.equal(await page.locator('#kept').evaluate(node => node.classList.contains('gab-filtered')), true);
+      await updateFixture(page, data => { data.override = {ok: true, filterState: {language: 'en', hideContent: true, handles: ['target_user', 123]}}; });
+      await page.waitForFunction(() => window.__requestedTypes.length >= 4);
+      await page.waitForTimeout(150);
+      assert.equal(await page.locator('#kept').evaluate(node => node.classList.contains('gab-filtered')), true);
+      await updateFixture(page, data => { data.override = undefined; data.state.entries = []; });
+      await page.waitForFunction(() => !document.querySelector('#kept').classList.contains('gab-filtered'));
+      assert.equal(await page.evaluate(() => window.__localReads), 0);
+    });
+
+    await t.test('only same-extension valid projection messages can change page filtering', async () => {
+      const page = await fixture({path: '/home'});
+      await page.evaluate(() => { document.querySelector('main').innerHTML = '<article id="guarded" data-testid="tweet"><div data-testid="User-Name"><a href="/target_user">Target</a></div><div data-testid="tweetText">Guarded</div></article>'; });
+      await page.waitForSelector('#guarded.gab-filtered');
+      const disable = {type: 'GAB_FILTER_STATE', filterState: {language: 'en', hideContent: false, handles: []}};
+      for (const sender of [{id: 'another-extension'}, {}]) assert.equal(await page.evaluate(({message, sender}) => window.__send(message, sender), {message: disable, sender}), undefined);
+      assert.deepEqual(await page.evaluate(() => window.__send({type: 'GAB_FILTER_STATE', filterState: {}})), {ok: false});
+      assert.equal(await page.locator('#guarded').evaluate(node => node.classList.contains('gab-filtered')), true);
+      assert.deepEqual(await page.evaluate(message => window.__send(message), disable), {ok: true});
+      await page.waitForFunction(() => !document.querySelector('#guarded').classList.contains('gab-filtered'));
     });
 
     await t.test('identifies the real compact-sidebar structure with an empty account-button label', async () => {
@@ -264,9 +337,9 @@ test('X read-only page browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT
       });
       await page.waitForSelector('#control.gab-filtered');
       assert.equal(await page.locator('#target').evaluate(element => element.classList.contains('gab-filtered')), false);
-      await page.evaluate(() => { window.__state.allowlist = []; window.__update(); });
+      await updateFixture(page, data => { data.state.allowlist = []; });
       await page.waitForSelector('#target.gab-filtered');
-      assert.deepEqual(await page.evaluate(() => window.__state.allowlistPins), state.allowlistPins);
+      assert.deepEqual(fixtures.get(page).state.allowlistPins, state.allowlistPins);
       assert.deepEqual(await page.evaluate(() => window.__clicks), []);
     });
 
@@ -282,7 +355,7 @@ test('X read-only page browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT
       assert.equal(await page.locator('#bad').evaluate(element => element.classList.contains('gab-filtered')), false);
       await page.locator('#bad a:has(time)').evaluate(element => element.setAttribute('href', '/target_user/status/456'));
       await page.waitForSelector('#bad.gab-filtered');
-      await page.evaluate(() => { window.__state.allowlist = ['target_user']; window.__update(); });
+      await updateFixture(page, data => { data.state.allowlist = ['target_user']; });
       await page.waitForFunction(() => !document.querySelector('#bad').classList.contains('gab-filtered'));
       assert.equal(await page.locator('.gab-placeholder').count(), 0);
       assert.equal(await page.locator('#bad [data-testid="tweetText"]').isVisible(), true);

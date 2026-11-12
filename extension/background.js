@@ -2,7 +2,9 @@ import {SCHEMA,MAX_BYTES,MAX_ENTRIES,SUBSCRIPTION_REFRESH_MS,now,uid,initialStat
 import {createXApiAdapter, XApiError} from './lib/x-api.js';
 import {createXSessionProvider} from './lib/x-session.js';
 import {prepareStorage,stateBytes,RECOVERY_BUDGET} from './lib/storage-budget.js';
+import {createStateStore} from './lib/state-store.js';
 
+const stateStore=createStateStore({initialState});
 const xSession=createXSessionProvider();
 const xApi=createXApiAdapter({getSession:()=>xSession.getSession(),fetchImpl:(...args)=>fetch(...args)});
 // These are conservative local budgets, not claims about X's server quotas.
@@ -19,7 +21,7 @@ function resetInterruptedSession(state) {
   }
 }
 async function readState() {
-  const {state}=await chrome.storage.local.get('state');
+  const state=await stateStore.read();
   const defaults=initialState();
   const result=state ? {...defaults,...state,entries:state.entries??[],subscriptions:state.subscriptions??[],officialListVersion:state.officialListVersion,nextAutoSyncAt:state.nextAutoSyncAt,settings:{...defaults.settings,...state.settings}} : defaults;
   if(state)installOfficialSubscription(result);
@@ -36,7 +38,7 @@ async function readState() {
   return result;
 }
 function mutate(fn, {critical=false}={}) {
-  const result=lock.then(async()=>{const state=await readState();const extra=await fn(state);prepareStorage(state,{critical});await chrome.storage.local.set({state});if(recoveryRequired){await chrome.storage.session.set({gabRecovery:false});recoveryRequired=false;}return {state,...extra};});
+  const result=lock.then(async()=>{const state=await readState();const extra=await fn(state);prepareStorage(state,{critical});await stateStore.write(state);if(recoveryRequired){await chrome.storage.session.set({gabRecovery:false});recoveryRequired=false;}return {state,...extra};});
   lock=result.catch(()=>{});return result;
 }
 function log(state,action,handle='',message='') {state.logs.unshift({at:now(),action,handle,message:String(message).slice(0,500)});state.logs=state.logs.slice(0,1000);}
@@ -277,11 +279,12 @@ async function handle(message,sender) {
   const extensionPage=sender.url?.startsWith(chrome.runtime.getURL(''));
   const content=!extensionPage;
   if(content&&(!sender.tab||!/^https:\/\/(x|twitter)\.com\//.test(sender.url??'')))throw new Error('Untrusted page.');
-  if(content&&!['GET_STATE','CAPTURE_PROGRESS'].includes(message.type))throw new Error('This operation is only available in the extension dashboard.');
+  if(content&&!['GET_FILTER_STATE','CAPTURE_PROGRESS'].includes(message.type))throw new Error('This operation is only available in the extension dashboard.');
   if(!content&&!extensionPage)throw new Error('Untrusted extension page.');
-  if(recoveryRequired&&!['GET_STATE','EXPORT','REMOVE_ENTRIES','REMOVE_SUBSCRIPTION','PAUSE_QUEUE'].includes(message.type))throw new Error('Export a private backup and remove unused data before continuing.');
+  if(recoveryRequired&&!['GET_STATE','GET_FILTER_STATE','EXPORT','REMOVE_ENTRIES','REMOVE_SUBSCRIPTION','PAUSE_QUEUE'].includes(message.type))throw new Error('Export a private backup and remove unused data before continuing.');
   switch(message.type) {
     case 'GET_STATE':return {state:await readState()};
+    case 'GET_FILTER_STATE':{const state=await readState();return {filterState:{language:state.settings.language,hideContent:state.settings.hideContent!==false,handles:effectiveEntries(state).map(entry=>entry.handle)}};}
     case 'SAVE_SETTINGS':return mutate(state=>{
       const x=message.settings??{};const enabling=x.autoBlock===true&&!state.settings.autoBlock;
       if(enabling){requireApiAccount(state);requireNoCooldown(state);}
@@ -353,7 +356,8 @@ async function handle(message,sender) {
     case 'CAPTURE_PROGRESS':{
       if(!sender.tab||!/^https:\/\/(x|twitter)\.com\/settings\/blocked(?:\/|$)/.test(sender.url??''))throw new Error('Capture only works on X blocked-account settings.');
       const parsed=parseImport(JSON.stringify(message.entries));
-      return mutate(state=>{if(state.capture.tabId!==sender.tab.id||state.capture.captureId!==message.captureId||state.capture.accountHandle!==message.accountHandle)throw new Error('Capture session changed; start a new capture.');const map=new Map(state.capture.entries.map(e=>[e.handle,e]));for(const e of parsed.entries)map.set(e.handle,{handle:e.handle,...(e.id?{id:e.id}:{})});if(map.size>MAX_ENTRIES)throw new Error('Capture limit reached.');state.capture={...state.capture,entries:[...map.values()],updatedAt:now(),status:String(message.status).slice(0,30),message:String(message.message??'').slice(0,300)};});
+      const result=await mutate(state=>{if(state.capture.tabId!==sender.tab.id||state.capture.captureId!==message.captureId||state.capture.accountHandle!==message.accountHandle)throw new Error('Capture session changed; start a new capture.');const map=new Map(state.capture.entries.map(e=>[e.handle,e]));for(const e of parsed.entries)map.set(e.handle,{handle:e.handle,...(e.id?{id:e.id}:{})});if(map.size>MAX_ENTRIES)throw new Error('Capture limit reached.');state.capture={...state.capture,entries:[...map.values()],updatedAt:now(),status:String(message.status).slice(0,30),message:String(message.message??'').slice(0,300)};});
+      return {capture:{count:result.state.capture.entries.length,status:result.state.capture.status}};
     }
     case 'EXPORT':{
       const state=await readState();const entries=state.entries.filter(e=>e.source==='local');
@@ -364,7 +368,7 @@ async function handle(message,sender) {
     default:throw new Error('Unknown operation.');
   }
 }
-chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:errorText(err)}));return true;});
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:errorText(err),...(err.code==='STATE_STORAGE'?{code:'STATE_STORAGE'}:{})}));return true;});
 chrome.alarms.onAlarm.addListener(alarm=>ready.then(()=>{if(alarm.name==='gab-sync')return syncAll({automatic:true});if(['gab-queue','gab-watchdog'].includes(alarm.name))return pump();}));
 chrome.cookies?.onChanged?.addListener(change=>{
   if(!['twid','ct0'].includes(change.cookie?.name)||!['x.com','.x.com'].includes(change.cookie?.domain))return;

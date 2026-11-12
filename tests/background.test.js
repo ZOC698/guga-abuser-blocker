@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {initialState as createInitialState,effectiveEntries,SUBSCRIPTION_REFRESH_MS} from '../extension/lib/core.js';
 import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_LIST_VERSION,OFFICIAL_SEED} from '../extension/lib/official-list.js';
 import {STATE_BUDGET,stateBytes} from '../extension/lib/storage-budget.js';
+import {createStateStore,STATE_DATABASE,STATE_OBJECT_STORE,STATE_REVISION_KEY} from '../extension/lib/state-store.js';
+import {IDBFactory} from 'fake-indexeddb';
+import {webcrypto} from 'node:crypto';
 
 // Keep existing safety cases isolated from the bundled public targets.
 const initialState=()=>({...createInitialState(),entries:[],subscriptions:[]});
@@ -15,6 +18,38 @@ const SCREEN_PATH='/i/api/graphql/AMIBMjtxEEATh4z8V9GtRg/UserByScreenName',REST_
 const VIEWER_PATH='/i/api/graphql/TpQxQtWMTMnIAMPlMGMqNw/Viewer';
 const VIEWER_FEATURES={subscriptions_upsells_api_enabled:false,profile_label_improvements_pcf_label_in_post_enabled:true,responsive_web_profile_redirect_enabled:true,rweb_tipjar_consumption_enabled:false,verified_phone_label_enabled:false,creator_subscriptions_tweet_preview_api_enabled:true,responsive_web_graphql_timeline_navigation_enabled:true};
 let storage={state:initialState()},session={},listener,alarmListener,startupListener,installedListener,cookieListener,alarms=new Map();
+// `storage.state` is a test-fixture mirror, never the production persistence API.
+// Backend writes must commit real AES-GCM ciphertext in fake IndexedDB before
+// their revision signal refreshes this mirror through independent decryption.
+const originalIndexedDB=globalThis.indexedDB,originalCrypto=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+globalThis.indexedDB=new IDBFactory();
+Object.defineProperty(globalThis,'crypto',{value:webcrypto,configurable:true});
+let localValues={},fixtureStore,mirrorJSON,fixtureWrites=Promise.resolve();
+after(()=>{fixtureStore?.close();globalThis.indexedDB=originalIndexedDB;if(originalCrypto)Object.defineProperty(globalThis,'crypto',originalCrypto);else delete globalThis.crypto;});
+async function encryptedRecords(){
+  const db=await new Promise((resolve,reject)=>{const request=globalThis.indexedDB.open(STATE_DATABASE,1);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+  try{return await new Promise((resolve,reject)=>{const transaction=db.transaction(STATE_OBJECT_STORE,'readonly'),store=transaction.objectStore(STATE_OBJECT_STORE);let key,envelope;store.get('key').onsuccess=event=>{key=event.target.result;};store.get('state').onsuccess=event=>{envelope=event.target.result;};transaction.oncomplete=()=>resolve({key,envelope});transaction.onerror=transaction.onabort=()=>reject(transaction.error);});}finally{db.close();}
+}
+async function refreshFixtureMirror(){
+  const {key,envelope}=await encryptedRecords();
+  assert.equal(key.extractable,false);assert.equal(key.algorithm.name,'AES-GCM');assert.equal(key.algorithm.length,256);
+  assert.equal(envelope.format,'gab-state/aes-gcm-v1');assert.equal(envelope.iv.byteLength,12);assert.ok(envelope.ciphertext instanceof ArrayBuffer);
+  const bytes=await webcrypto.subtle.decrypt({name:'AES-GCM',iv:envelope.iv,additionalData:new TextEncoder().encode(`${envelope.format}:${envelope.revision}`),tagLength:128},key,envelope.ciphertext);
+  storage={state:JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes))};mirrorJSON=JSON.stringify(storage.state);
+}
+function commitFixtureChanges(){
+  const operation=fixtureWrites.then(async()=>{
+    const fixtureJSON=JSON.stringify(storage.state);
+    if(fixtureJSON===mirrorJSON)return;
+    assert.notEqual(fixtureJSON,undefined,'Use a fresh-profile reload for absent state.');
+    // Only explicit test setup edits enter here. Results are independently read
+    // from the encrypted record, never copied from runtime message responses.
+    await fixtureStore.write(JSON.parse(fixtureJSON));
+    assert.equal(mirrorJSON,fixtureJSON,'Fixture seed must round-trip through the encrypted store.');
+  });
+  fixtureWrites=operation.catch(()=>{});return operation;
+}
+const fixtureEvent=fn=>async(...args)=>{await commitFixtureChanges();return fn(...args);};
 let cookieAccount=ACCOUNT,cookieCSRF=CSRF,cookieHook=null,cookieReads=[],requests=[],tabCalls=[],fetchHook=null,blocked=new Set(),serial=0;
 const serverHandles=new Map([[ACCOUNT,'owner'],[OTHER_ACCOUNT,'other_owner']]);
 const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});
@@ -42,28 +77,46 @@ globalThis.fetch=fakeFetch;
 const unexpectedTab=method=>async()=>{tabCalls.push(method);throw new Error('Unexpected browser operation in API execution');};
 storage.state.workerTabId=99;storage.state.runId='old-run';storage.state.paused=false;
 storage.state.queue=[{id:'interrupted',handle:'target',accountHandle:'owner',status:'running',updatedAt:new Date().toISOString()}];
+localValues={state:structuredClone(storage.state)};mirrorJSON=JSON.stringify(storage.state);
 const extensionId='fixture';
 globalThis.chrome={
-  runtime:{id:extensionId,getURL:path=>`chrome-extension://${extensionId}/${path}`,onMessage:{addListener:fn=>listener=fn},onInstalled:{addListener:fn=>installedListener=fn},onStartup:{addListener:fn=>startupListener=fn}},
-  storage:{local:{get:async()=>structuredClone(storage),set:async value=>{storage=structuredClone(value);}},session:{get:async()=>structuredClone(session),set:async value=>{session={...session,...value};}}},
-  alarms:{get:async name=>alarms.get(name),create:async(name,value)=>alarms.set(name,value),onAlarm:{addListener:fn=>alarmListener=fn}},
+  runtime:{id:extensionId,getURL:path=>`chrome-extension://${extensionId}/${path}`,onMessage:{addListener:fn=>listener=(...args)=>{void commitFixtureChanges().then(()=>fn(...args)).catch(error=>args[2]({ok:false,error:error.message}));return true;}},onInstalled:{addListener:fn=>installedListener=fixtureEvent(fn)},onStartup:{addListener:fn=>startupListener=fixtureEvent(fn)}},
+  storage:{local:{get:async keys=>{const names=typeof keys==='string'?[keys]:Array.isArray(keys)?keys:Object.keys(localValues);return structuredClone(Object.fromEntries(names.filter(key=>Object.hasOwn(localValues,key)).map(key=>[key,localValues[key]])));},set:async value=>{assert.equal(Object.hasOwn(value,'state'),false,'Production must not persist plaintext state in chrome.storage.local.');localValues={...localValues,...structuredClone(value)};if(Object.hasOwn(value,STATE_REVISION_KEY))await refreshFixtureMirror();},remove:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])delete localValues[key];}},session:{get:async()=>structuredClone(session),set:async value=>{session={...session,...value};}}},
+  alarms:{get:async name=>alarms.get(name),create:async(name,value)=>alarms.set(name,value),onAlarm:{addListener:fn=>alarmListener=fixtureEvent(fn)}},
   permissions:{contains:async()=>true},
-  cookies:{onChanged:{addListener:fn=>cookieListener=fn},get:async args=>{assert.equal(args.url,'https://x.com/i/api/1.1/');assert.ok(['twid','ct0'].includes(args.name));cookieReads.push(args.name);if(cookieHook)await cookieHook(args,cookieReads.length);const value=args.name==='twid'?(cookieAccount?`u%3D${cookieAccount}`:null):cookieCSRF;return value?{name:args.name,value,domain:'.x.com',secure:true,path:'/',storeId:'0'}:null;}},
+  cookies:{onChanged:{addListener:fn=>cookieListener=fixtureEvent(fn)},get:async args=>{assert.equal(args.url,'https://x.com/i/api/1.1/');assert.ok(['twid','ct0'].includes(args.name));cookieReads.push(args.name);if(cookieHook)await cookieHook(args,cookieReads.length);const value=args.name==='twid'?(cookieAccount?`u%3D${cookieAccount}`:null):cookieCSRF;return value?{name:args.name,value,domain:'.x.com',secure:true,path:'/',storeId:'0'}:null;}},
   tabs:{query:unexpectedTab('query'),get:unexpectedTab('get'),sendMessage:unexpectedTab('sendMessage'),create:unexpectedTab('create'),update:unexpectedTab('update'),reload:unexpectedTab('reload')}
 };
+fixtureStore=createStateStore({initialState:createInitialState});
 await import('../extension/background.js');
 const send=(message,sender={id:extensionId,url:'chrome-extension://fixture/options.html',tab:{id:8}})=>new Promise(resolve=>listener(message,sender,resolve));
 const entry=(handle='target',id=TARGET)=>({handle,...(id?{id}:{}),source:'local',status:'approved',reason:'',evidence:[]});
 function reset({bound=false,entries=[]}={}){clock+=60000;storage={state:initialState()};storage.state.entries=entries;cookieAccount=ACCOUNT;cookieCSRF=CSRF;cookieHook=null;cookieReads=[];requests=[];tabCalls=[];fetchHook=null;blocked=new Set();globalThis.fetch=fakeFetch;if(bound)Object.assign(storage.state.settings,{accountId:ACCOUNT,accountHandle:'owner',sessionInvalid:false});}
-async function until(predicate){for(let i=0;i<300;i++){if(predicate()){await new Promise(resolve=>setImmediate(resolve));return;}await new Promise(resolve=>setTimeout(resolve,1));}assert.ok(predicate(),'Fixture operation did not settle');}
-async function runQueue(){const result=await send({type:'START_QUEUE'});assert.equal(result.ok,true,result.error);await until(()=>!storage.state.queue.some(job=>job.status==='running')&&(storage.state.queue.some(job=>['done','failed','uncertain','skipped','needs_id'].includes(job.status))||storage.state.apiCooldown));return storage.state;}
+async function until(predicate){for(let i=0;i<2000;i++){if(predicate()){await new Promise(resolve=>setImmediate(resolve));return;}await new Promise(resolve=>setTimeout(resolve,1));}assert.ok(predicate(),'Fixture operation did not settle');}
+async function runQueue(){
+  const result=await send({type:'START_QUEUE'});assert.equal(result.ok,true,result.error);
+  const starting=new Map(result.state.queue.map(job=>[job.id,job.status]));
+  await until(()=>{
+    const active=storage.state.queue.filter(job=>job.accountId===storage.state.settings.accountId);
+    return !active.some(job=>job.status==='running')&&(active.some(job=>job.status==='needs_id'||(['done','failed','uncertain','skipped'].includes(job.status)&&job.status!==starting.get(job.id)))||storage.state.apiCooldown?.until>clock);
+  });
+  return storage.state;
+}
 const posts=()=>requests.filter(call=>call.method==='POST');
 const apiPaths=()=>requests.map(call=>new URL(call.url).pathname.replace(/^\/(?:i\/api\/)?1\.1\//,'').replace(/^\/i\/api\/graphql\/[^/]+\//,''));
-async function reloadWorker(){await import(`../extension/background.js?api-test-${++serial}`);await send({type:'GET_STATE'});}
+async function reloadWorker(){
+  if(!Object.hasOwn(storage,'state')){
+    await fixtureWrites;fixtureStore.close();globalThis.indexedDB=new IDBFactory();localValues={};mirrorJSON=undefined;
+    fixtureStore=createStateStore({initialState:createInitialState});
+  }else await commitFixtureChanges();
+  await import(`../extension/background.js?api-test-${++serial}`);await send({type:'GET_STATE'});
+}
 
 test('new browser session discards stale tab ownership and pauses interrupted writes',async()=>{
   const result=await send({type:'GET_STATE'});
   assert.equal(result.state.workerTabId,null);assert.equal(result.state.runId,null);assert.equal(result.state.queue[0].status,'uncertain');assert.equal(result.state.paused,true);
+  assert.equal(Object.hasOwn(localValues,'state'),false,'Verified encrypted migration must remove the legacy plaintext state.');
+  assert.ok(localValues[STATE_REVISION_KEY]>0);
   assert.ok(session.gabSession);assert.ok(alarms.has('gab-watchdog'));assert.ok(alarms.has('gab-sync'));
   storage={state:initialState()};
 });
@@ -136,11 +189,11 @@ test('watchdog marks stale in-flight work uncertain instead of repeating it',asy
 
 test('worker suspension preserves durable API limits and restart clears obsolete tab ownership',async()=>{
   storage={state:initialState()};storage.state.workerTabId=44;storage.state.apiCooldown={kind:'rate_limit',until:clock+60000};
-  await import('../extension/background.js?same-session');
+  await reloadWorker();
   assert.equal((await send({type:'GET_STATE'})).state.apiCooldown.until,clock+60000);
-  session={};await import('../extension/background.js?next-session');
+  session={};await reloadWorker();
   assert.equal((await send({type:'GET_STATE'})).state.workerTabId,null);
-  alarms.clear();startupListener();await new Promise(resolve=>setTimeout(resolve,0));assert.ok(alarms.has('gab-sync'));assert.ok(alarms.has('gab-watchdog'));assert.ok(alarms.has('gab-queue'));
+  alarms.clear();await startupListener();assert.ok(alarms.has('gab-sync'));assert.ok(alarms.has('gab-watchdog'));assert.ok(alarms.has('gab-queue'));
 });
 
 test('incognito content and arbitrary write methods cannot reach the queue',async()=>{
@@ -151,7 +204,7 @@ test('incognito content and arbitrary write methods cannot reach the queue',asyn
 test('oversized legacy state remains paused, exportable and recoverable after upgrade',async()=>{
   storage={state:initialState()};session={};storage.state.workerTabId=88;storage.state.paused=false;
   storage.state.entries=[{handle:'legacy',source:'local',status:'pending',reason:'x'.repeat(9*1024*1024),evidence:[]}];
-  await import('../extension/background.js?legacy-recovery');
+  await reloadWorker();
   let result=await send({type:'GET_STATE'});assert.equal(result.ok,true);assert.equal(result.state.paused,true);assert.equal(result.state.workerTabId,null);assert.equal(storage.state.entries.length,1);
   assert.equal((await send({type:'EXPORT',kind:'private'})).ok,true);assert.equal((await send({type:'START_QUEUE'})).ok,false);
   result=await send({type:'REMOVE_ENTRIES',handles:['legacy']});assert.equal(result.ok,true);assert.equal(result.state.entries.length,0);assert.equal(session.gabRecovery,false);assert.equal(result.state.paused,true);
@@ -309,9 +362,9 @@ test('same-session migration immediately preserves a running legacy write as unc
 });
 
 test('account or missing-session cookie changes invalidate execution without network access',async()=>{
-  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;cookieAccount=OTHER_ACCOUNT;cookieListener({cookie:{name:'twid',domain:'.x.com'}});await until(()=>storage.state.settings.sessionInvalid);assert.equal(storage.state.paused,true);assert.equal(storage.state.settings.autoBlock,false);assert.equal(requests.length,0);
-  reset({bound:true});cookieCSRF=null;cookieListener({cookie:{name:'ct0',domain:'x.com'}});await until(()=>storage.state.settings.sessionInvalid);assert.equal(requests.length,0);
-  reset({bound:true});cookieAccount=OTHER_ACCOUNT;cookieListener({cookie:{name:'twid',domain:'example.com'}});await new Promise(resolve=>setImmediate(resolve));assert.equal(storage.state.settings.sessionInvalid,false);
+  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;cookieAccount=OTHER_ACCOUNT;await cookieListener({cookie:{name:'twid',domain:'.x.com'}});await until(()=>storage.state.settings.sessionInvalid);assert.equal(storage.state.paused,true);assert.equal(storage.state.settings.autoBlock,false);assert.equal(requests.length,0);
+  reset({bound:true});cookieCSRF=null;await cookieListener({cookie:{name:'ct0',domain:'x.com'}});await until(()=>storage.state.settings.sessionInvalid);assert.equal(requests.length,0);
+  reset({bound:true});cookieAccount=OTHER_ACCOUNT;await cookieListener({cookie:{name:'twid',domain:'example.com'}});await new Promise(resolve=>setImmediate(resolve));assert.equal(storage.state.settings.sessionInvalid,false);
 });
 
 test('write budgets persist across reconnect restart and account switching',async()=>{
@@ -580,4 +633,35 @@ test('explicitly adding a subscription immediately fetches only that source with
   const result=await send({type:'ADD_SUBSCRIPTION',url,name:'Optional'});assert.equal(result.ok,true);
   assert.deepEqual(requests.map(call=>[call.url,call.method]),[[url,'GET']]);assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.lastSyncAttemptAt,null);
   assert.equal(storage.state.subscriptions.length,2);assert.equal(storage.state.entries.length,524);assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(posts().length,0);
+});
+
+test('backend commits encrypted state independently of the fixture mirror and survives an independent reopen',async()=>{
+  reset({bound:true});
+  const privateReason='Synthetic private note for encrypted persistence regression';
+  let result=await send({type:'IMPORT',text:JSON.stringify([{handle:'private_fixture',id:TARGET,reason:privateReason}])});
+  assert.equal(result.ok,true,result.error);assert.equal(result.state.entries[0].reason,privateReason);
+  const before=await encryptedRecords();
+  assert.equal(before.key.extractable,false);assert.deepEqual(before.key.algorithm,{name:'AES-GCM',length:256});
+  assert.deepEqual(Object.keys(before.envelope).sort(),['ciphertext','format','iv','revision']);
+  const encodedCiphertext=Buffer.from(before.envelope.ciphertext);
+  for(const plaintext of [privateReason,'private_fixture',ACCOUNT,TARGET])assert.equal(encodedCiphertext.includes(Buffer.from(plaintext)),false);
+  assert.deepEqual(localValues,{[STATE_REVISION_KEY]:before.envelope.revision});
+
+  result=await send({type:'SAVE_SETTINGS',settings:{language:'ja'}});assert.equal(result.ok,true,result.error);
+  const persisted=structuredClone(result.state),afterWrite=await encryptedRecords();
+  assert.ok(afterWrite.envelope.revision>before.envelope.revision);
+  assert.notDeepEqual(afterWrite.envelope.iv,before.envelope.iv);
+  assert.notDeepEqual(afterWrite.envelope.ciphertext,before.envelope.ciphertext);
+  const reopened=createStateStore({initialState:()=>{throw new Error('Existing encrypted data must be authoritative.');}});
+  try{assert.deepEqual(await reopened.read(),persisted);}finally{reopened.close();}
+
+  // Deliberately poison only the observation mirror and mark it as observed, so
+  // the harness cannot reseed this value before GET_STATE. Production must read
+  // the independently committed IndexedDB record rather than this test object.
+  storage={state:{fixtureMirrorOnly:true}};mirrorJSON=JSON.stringify(storage.state);
+  try{
+    const actual=await send({type:'GET_STATE'});assert.equal(actual.ok,true,actual.error);assert.deepEqual(actual.state,persisted);
+    assert.deepEqual(localValues,{[STATE_REVISION_KEY]:afterWrite.envelope.revision});
+    assert.equal(requests.length,0);
+  }finally{await refreshFixtureMirror();}
 });

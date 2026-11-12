@@ -1,4 +1,24 @@
-# Verification · 0.2.4 · 2026-11-12
+# Verification · 0.2.5 · 2026-11-12
+
+**The final combined 0.2.5 suite passed: 205 tests, 0 failures, 0 skipped.** This includes 177 unit tests and 28 browser tests. The public list still contains exactly 523 handle/ID pairs. This is isolated test evidence; the real-X new-block limitation below remains unchanged.
+
+## Verified 0.2.5 changes
+
+The classic GuguPet artwork now appears in the extension's toolbar and dashboard. All four 16/32/48/128 PNG icons are direct frame extractions from the existing original ICO. English, Japanese and Simplified Chinese manifest metadata resolve correctly. The package adds no permissions or network destinations.
+
+Persistent state now uses AES-GCM-256 with a fresh 12-byte IV for each write and authenticated format/revision metadata. A non-extractable CryptoKey and the first ciphertext are committed together in extension-origin IndexedDB. The old `storage.local.state` is deleted only after the encrypted representation has been committed and successfully decrypted. `storage.local` retains a non-sensitive revision signal; popup drafts remain in memory-backed `storage.session`.
+
+Eighteen focused unit tests exercise migration interruptions, failed commits/cleanup, random IVs, authenticated revision and ciphertext checks, missing or substituted keys, notification failure and database deletion with a retained revision. A separate real isolated Chromium fixture seeds synthetic legacy data using a test-owned static bootstrap and then imports the unchanged production worker. Across complete browser shutdown/relaunch, it verifies retained account, entries, pause/recovery state, history, budgets, cooldowns and CryptoKey persistence. An aborted IndexedDB write prevents queue activation. Ciphertext corruption and key deletion each survive restart without being silently replaced: state access, queue activation, connection and sync fail, with no X or GitHub request. This test does not read or migrate the user's daily Chrome profile.
+
+The full background regression suite uses the actual encrypted store with WebCrypto and fake-indexeddb. A separate assertion decrypts committed data independently so a fixture mirror cannot substitute for persisted state. Page content scripts can only request the language, hide setting and effective handles; they cannot request the complete library. Capture replies also exclude the full state. Real extension browser tests verify this boundary from an isolated content-script world, revision updates, preservation of filtering/cached UI on read failure, and a visible failure instead of an empty-library display on the first failed read.
+
+The key and ciphertext share a browser profile. Non-extractability means WebCrypto cannot export the key; it is not a promise of an OS-backed key vault or resistance to full-profile theft or local malware. Deleting the old storage key does not physically erase browser database history or system backups. Intentional private JSON/CSV exports remain readable files.
+
+The separate Chrome Web Store ZIP has `manifest.json` at its root and exactly 25 runtime files. The packaging script verifies every archived byte against the extension directory. An additional fresh Chromium launch loaded the actual ZIP's extracted contents using its unmodified manifest: it resolved the name/version, loaded the packaged 523 entries with automatic execution off, and produced nine 1280 × 800 screenshots across English/Japanese/Chinese with zero page errors or external requests. The popup preview also uses the same classic icon. This establishes package loading, not store acceptance.
+
+The Chrome Web Store dashboard could not be opened through the browser tool: access returned `Not allowed` before upload. No store item, upload, review submission or approval is claimed. The existing live Chrome profile was not reloaded in this release verification. GitHub release publication and archive hashes are recorded separately after the release operation.
+
+## Historical 0.2.4 evidence
 
 **The final 0.2.4 combined suite passed: 182 tests, 0 failures, 0 skipped.** This includes 158 unit tests and 24 browser tests. Manifest, assets, syntax, CSP and the unchanged 523-entry public list also passed validation. Publication and installed-browser evidence are recorded separately in the release verification artifact.
 
@@ -66,6 +86,6 @@ This remains a developer-load distribution with limited live validation. The sel
 
 ## Rerun
 
-These commands are for maintainers. Use Node 20 or later. Run `npm run check`, `npm run validate:list` and `npm run test:unit`. Install the pinned test dependency with `npm ci --ignore-scripts`, install Chromium using `npx playwright install chromium`, then run the mandatory `npm run test:browser`. Run `npm test` with browser dependencies available for the combined suite. An existing isolated test installation can be selected with `PLAYWRIGHT_MODULE` and `GAB_CHROMIUM_PATH`. The required browser command fails when dependencies are missing; a skipped test is not a pass. Normal extension users do not need Node, Codex or a terminal.
+These commands are for maintainers. Use Node 20 or later. Install the pinned test dependencies with `npm ci --ignore-scripts`, then run `npm run check`, `npm run validate:list` and `npm run test:unit`. Install Chromium using `npx playwright install chromium`, then run the mandatory `npm run test:browser`. Run `npm test` with browser dependencies available for the combined suite. An existing isolated test installation can be selected with `PLAYWRIGHT_MODULE` and `GAB_CHROMIUM_PATH`. The required browser command fails when dependencies are missing; a skipped test is not a pass. Use `npm run package` for the developer archive and `npm run package:store` for the runtime-only store archive. Normal extension users do not need Node, Codex or a terminal.
 
 Platform references: [Chrome network requests](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests), [cookies API](https://developer.chrome.com/docs/extensions/reference/api/cookies), [storage and cookies](https://developer.chrome.com/docs/extensions/develop/concepts/storage-and-cookies), [MV3 worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle), and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
