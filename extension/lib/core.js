@@ -1,3 +1,5 @@
+import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_SUBSCRIPTION_NAME,OFFICIAL_LIST_VERSION,OFFICIAL_SEED} from './official-list.js';
+
 export const SCHEMA = 'guga-blocklist/v1';
 export const MAX_ENTRIES = 20000;
 export const MAX_BYTES = 4 * 1024 * 1024;
@@ -87,7 +89,38 @@ export function parseImport(text, {source='local', status='approved', strictPubl
 }
 
 export function initialState() {
-  return {version:2,executorVersion:'x-api-v1',settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',accountId:'',sessionInvalid:false,intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],allowlistPins:{},queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{},apiCooldown:null,apiBudget:{accountId:'',writes:[]}};
+  const state={version:2,executorVersion:'x-api-v1',settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',accountId:'',sessionInvalid:false,intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],allowlistPins:{},queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{},apiCooldown:null,apiBudget:{accountId:'',writes:[]}};
+  installOfficialSubscription(state);
+  return state;
+}
+
+export function installOfficialSubscription(state) {
+  // This records the one-time default installation, not consent to execute.
+  // In particular a removed source must never reappear on worker/browser restart
+  // or merely because a later extension bundles a newer seed version.
+  if(Number.isInteger(state.officialListVersion)&&state.officialListVersion>0)return false;
+  const matching=state.subscriptions.filter(sub=>sub.url===OFFICIAL_SUBSCRIPTION_URL);
+  if(matching.length) {
+    // Preserve a prior opt-out and the chosen source's cache (including an empty
+    // curator list). Older duplicate URL sources do not create extra targets.
+    const kept=matching.find(sub=>!sub.enabled)||matching[0];
+    const removed=new Set(matching.filter(sub=>sub!==kept&&sub.id!==kept.id).map(sub=>sub.id));
+    const entries=state.entries.filter(entry=>!removed.has(entry.source));
+    retainAllowlistIdentities(state,entries);
+    state.entries=entries;
+    state.subscriptions=state.subscriptions.filter(sub=>sub.url!==OFFICIAL_SUBSCRIPTION_URL||sub===kept);
+  } else {
+    const id=state.subscriptions.some(sub=>sub.id===OFFICIAL_SUBSCRIPTION_ID)?uid():OFFICIAL_SUBSCRIPTION_ID;
+    const parsed=parseImport(JSON.stringify(OFFICIAL_SEED),{source:id,status:'approved',strictPublic:true});
+    // A full pre-existing local database remains usable. Leave its contents
+    // intact and expose a normal subscription error until space is freed.
+    const fits=state.entries.length+parsed.entries.length<=MAX_ENTRIES;
+    const seeded=fits?parsed.entries:[];
+    state.entries=[...state.entries,...seeded];
+    state.subscriptions=[...state.subscriptions,{id,url:OFFICIAL_SUBSCRIPTION_URL,name:OFFICIAL_SUBSCRIPTION_NAME,enabled:true,updatedAt:fits?OFFICIAL_SEED.updatedAt:null,error:fits?'':'Combined list exceeds 20,000 entries.',count:seeded.length}];
+  }
+  state.officialListVersion=OFFICIAL_LIST_VERSION;
+  return true;
 }
 
 export function retainAllowlistIdentities(state, nextEntries=state.entries) {

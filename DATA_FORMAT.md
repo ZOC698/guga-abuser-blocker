@@ -1,4 +1,4 @@
-# Guga list format · v1 · extension 0.2.2
+# Guga list format · v1 · extension 0.2.3
 
 Chinese: 本地导入直接启用，无需审核；重新导入会重新启用匹配的已停用条目。公开订阅直接信任维护者的条目。数字 ID 必须保存为字符串，并同时提供当前用户名。
 
@@ -23,21 +23,19 @@ Each entry is an object with these fields:
 | --- | --- |
 | `handle` | Required current X username, 1–15 ASCII letters, digits or underscores; optional leading `@`. Normalized to lowercase. |
 | `id` | Optional X numeric user ID, a **string** of 1–25 decimal digits. JSON numbers are rejected to prevent precision loss. |
-| `reason` | Optional curator-written explanation; retained up to 1,000 characters. |
-| `evidence` | Optional array of HTTPS URLs without embedded credentials; up to 10 URLs. |
+| `reason` | Optional owner-supplied explanation; if present, 1–1,000 trimmed characters. |
+| `evidence` | Optional array of 1–10 unique HTTPS URLs without embedded credentials. |
 
 An illustrative entry below uses placeholders and is **not a recommendation to block any account**:
 
 ```json
 {
   "handle": "example_account",
-  "id": "1234567890123456789",
-  "reason": "Replace with a reviewed, specific reason.",
-  "evidence": []
+  "id": "1234567890123456789"
 }
 ```
 
-The extension enables subscription entries because the user explicitly trusts the source. Imported `source`, `status` and `addedAt` fields are not trusted. The extension only reads public subscription files and does not export or upload public lists. The repository maintainer generates the public file with the separate CLI described in CONTRIBUTING.md. Public publication still requires the maintainer's evidence review; locally enabled entries are not automatically publication-approved. Reasons and evidence are curator submissions, not plugin-verified findings.
+The official subscription is included and enabled by default, with a packaged starting copy. Its initial 523 `{handle,id}` entries are owner-selected imported blocking preferences, not independently verified findings of abuse. No reason or evidence is fabricated to fill optional fields. Imported `source`, `status` and `addedAt` fields are not trusted. The extension only reads public subscription files and does not export or upload public lists. Maintainers with repository write access generate the public file using the separate CLI described in CONTRIBUTING.md; approval status, reasons and evidence are not required to publish an explicitly selected input.
 
 Public URLs must have this form:
 
@@ -45,7 +43,7 @@ Public URLs must have this form:
 https://raw.githubusercontent.com/OWNER/REPO/BRANCH/path/list.json
 ```
 
-Only this HTTPS host and `.json` files are accepted. Credentials, query strings, fragments and non-default ports are rejected. Use a public repository; no PAT is accepted or needed. The `name` and `updatedAt` metadata are descriptive, not signatures or a guarantee of freshness. Keep the same path for updates. Failed refreshes retain the last successfully loaded data; successful refreshes replace that source's entries. Deletions do not reverse completed native X blocks.
+Only this HTTPS host and `.json` files are accepted. Credentials, query strings, fragments and non-default ports are rejected. The extension requires GitHub Raw read permission for its default official subscription. Use a public repository; no PAT is accepted or needed. The `name` and `updatedAt` metadata are descriptive, not signatures or a guarantee of freshness. Keep the same path for updates. Failed refreshes retain the last successfully loaded data; successful refreshes replace that source's entries. Deletions do not reverse completed native X blocks.
 
 ## Local imports
 
@@ -67,4 +65,6 @@ Native API blocking uses the supplied numeric target ID. IDs are pinned and chec
 
 The original [Bird Shield blacklist directory](https://github.com/free-spirit-dev/bird-shield-blocking/tree/main/bird-shield-blocking/share/blacklist) contains plain text numeric IDs, one per line; [fraud.txt](https://github.com/free-spirit-dev/bird-shield-blocking/blob/main/bird-shield-blocking/share/blacklist/fraud.txt) is a directly inspected example. Those ID-only files are rejected until current handles are supplied. This release does not implement Bird Shield's complete synchronization format or automatically import its lists.
 
-Private source exports and backups stay outside the repository. Only authorized maintainers build the public file with scripts/build-list.mjs from a separate publication-review file, inspect the diff and publish it through their repository access. A private backup's `approved` value means locally enabled and must not substitute for publication review. Subscriber uploads and list PRs are not part of the workflow.
+Working exports and private metadata stay outside the repository; only the owner's selected public fields are published. `scripts/build-list.mjs --input FILE` accepts `{ "entries": [{ "handle": "example_account", "id": "1234567890123456789" }] }`; input schema is optional and must be correct if supplied. Statusless rows and legacy `approved` rows are included; explicitly `pending` or `excluded` rows remain omitted. Unknown statuses are rejected. `--review` is retained as an input alias, not an approval requirement. The builder strips private fields and omits blank reasons or empty evidence arrays, while validating any nonempty context. It does not generate reasons or evidence.
+
+After updating `lists/guga-blocklist.json`, maintainers run `npm run sync:official` to regenerate the packaged copy, then check and package the extension. The public JSON is the source of truth; do not edit both copies manually. The project check requires them to match. Subscribers have no write/PAT/upload capability, and list PRs are not the publication workflow.

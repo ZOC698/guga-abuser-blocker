@@ -1,11 +1,12 @@
 import { mountDashboard } from './lib/dashboard-view.js';
-import { parseImport } from './lib/core.js';
+import { parseImport, effectiveEntries } from './lib/core.js';
 import { t, setLanguage, translatePage, dateText } from './lib/i18n.js';
 
 mountDashboard();
 const compact = document.body.classList.contains('popup-dashboard');
 const $ = (id) => document.getElementById(id);
 const PAGE_SIZE = 50;
+const OFFICIAL_SUBSCRIPTION_URL = 'https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blocklist.json';
 let state = { settings: {}, entries: [], subscriptions: [], allowlist: [], queue: [], logs: [], capture: { entries: [] } };
 let page = 0;
 let selected = new Set();
@@ -112,7 +113,9 @@ function accountLabel() { const settings = state.settings || {}; return settings
 function requireApiReady() { if (!apiConnected()) throw new Error(t('apiReconnectRequired')); if (activeCooldown()) throw new Error(t('apiCooldownWait')); }
 function localEntries() { return (state.entries || []).filter((entry) => entry.source === 'local'); }
 function allowedSet() { return new Set(state.allowlist || []); }
-function activeEntries() { const allowed = allowedSet(); return (state.entries || []).filter((entry) => entry.status === 'approved' && !allowed.has(entry.handle)); }
+function isOfficialSubscription(sub) { return sub.id === 'guga-official' || sub.url === OFFICIAL_SUBSCRIPTION_URL; }
+function entryEnabled(entry) { return entry.status === 'approved' && (entry.source === 'local' || state.subscriptions?.find((sub) => sub.id === entry.source)?.enabled !== false); }
+function activeEntries() { return effectiveEntries(state); }
 function filteredEntries() {
   const query = $('search').value.trim().toLowerCase();
   const filter = $('status-filter').value;
@@ -120,7 +123,8 @@ function filteredEntries() {
   return (state.entries || []).filter((entry) => {
     if (filter === 'allow' && !allowed.has(entry.handle)) return false;
     if (filter === 'local' && entry.source !== 'local') return false;
-    if (['pending', 'approved'].includes(filter) && entry.status !== filter) return false;
+    if (filter === 'approved' && !entryEnabled(entry)) return false;
+    if (filter === 'pending' && entryEnabled(entry)) return false;
     const source = state.subscriptions?.find((sub) => sub.id === entry.source)?.name || '';
     return !query || `${entry.handle} ${entry.reason || ''} ${entry.id || ''} ${source}`.toLowerCase().includes(query);
   }).sort((a,b) => a.handle.localeCompare(b.handle));
@@ -154,15 +158,22 @@ function renderApiStatus() {
   $('api-cooldown').textContent = t('apiCooldownNotice', {kind: t(`cooldown_${kind}`), until: dateText(cooldown.until)});
   cooldownTimer = setTimeout(render, Math.min(60000, Math.max(100, cooldown.until - Date.now() + 50)));
 }
+function renderEnabledCount() {
+  const node = $('stat-approved');
+  try { node.textContent = activeEntries().length; node.removeAttribute('title'); }
+  catch (error) { node.textContent = '—'; node.title = error?.message || String(error); }
+}
 function renderOverview() {
   const settings = state.settings || {};
   const account = settings.accountHandle;
   const connected = apiConnected();
+  const official = state.subscriptions?.find(isOfficialSubscription);
+  $('included-list-note').textContent = t(official ? official.enabled === false ? 'includedListDisabled' : 'includedListHelp' : 'chooseListHelp');
   $('account-status').textContent = connected ? accountLabel() : settings.accountId || account ? `${accountLabel()} · ${t('reconnect')}` : t('disconnected');
   $('account-pill').classList.toggle('connected', connected);
   const entries = state.entries || [];
   $('nav-count').textContent = new Set(entries.map((e) => e.handle)).size;
-  $('stat-approved').textContent = new Set(activeEntries().map((e) => e.handle)).size;
+  renderEnabledCount();
   $('stat-subs').textContent = (state.subscriptions || []).filter((s) => s.enabled !== false).length;
   const blocked = settings.accountId ? state.nativeBlocked?.[`id:${settings.accountId}`] : null;
   $('stat-done').textContent = blocked ? Object.keys(blocked).length : new Set((state.queue || []).filter((job) => job.status === 'done' && settings.accountId && job.accountId === settings.accountId).map((job) => job.userId || job.handle)).size;
@@ -173,7 +184,7 @@ function renderOverview() {
   const mode = !connected ? 'Off' : paused ? 'Paused' : settings.autoBlock ? 'On' : 'Off';
   $('protection-badge').textContent = t(`protection${mode}`);
   $('protection-title').textContent = t(`protection${mode}Title`);
-  $('protection-desc').textContent = t(`protection${mode}Desc`);
+  $('protection-desc').textContent = t(mode === 'Off' && official && official.enabled !== false ? 'officialReadyDesc' : `protection${mode}Desc`);
   $('hero-action').textContent = !connected ? t(settings.accountId || account ? 'reconnect' : 'connect') : activeCooldown() ? t('viewActivity') : paused ? t('startQueue') : settings.autoBlock ? t('viewActivity') : t('enableAuto');
   $('queue-status').textContent = t(activeCooldown() ? 'queueCooling' : state.paused ? 'queuePaused' : active.length ? 'queueRunning' : missingIds ? 'needs_id' : 'queueIdle');
   $('queue-remaining').textContent = active.length;
@@ -181,7 +192,7 @@ function renderOverview() {
   $('queue-start').disabled = !connected || !!activeCooldown();
   $('queue-pause').disabled = !!state.paused;
 }
-function sourceName(entry) { return entry.source === 'local' ? t('sourceLocal') : state.subscriptions?.find((sub) => sub.id === entry.source)?.name || t('sourceSubscription'); }
+function sourceName(entry) { const sub = state.subscriptions?.find((item) => item.id === entry.source); return entry.source === 'local' ? t('sourceLocal') : sub && isOfficialSubscription(sub) ? t('officialList') : sub?.name || t('sourceSubscription'); }
 function badge(status, kind = 'queue') {
   const label = kind === 'entry' ? status === 'approved' ? 'entryEnabled' : 'entryDisabled' : status;
   return element('span', t(label), `badge ${status === 'needs_id' ? 'pending' : status}`);
@@ -205,7 +216,7 @@ function renderLibrary() {
     const account = element('td');
     const link = safeLink(`https://x.com/${encodeURIComponent(entry.handle)}`, `@${entry.handle}`, 'account-name'); account.append(link);
     account.append(element('span', entry.id || t('missingNumericId'), 'account-id'));
-    const status = element('td'); status.append(badge(entry.status || 'pending', 'entry'));
+    const status = element('td'); status.append(badge(entryEnabled(entry) ? 'approved' : 'pending', 'entry'));
     const reason = element('td'); reason.append(element('span', entry.reason || t('noReason'), 'reason-text'));
     const source = element('span', sourceName(entry), 'source-text');
     if (entry.evidence?.length) { const evidenceLink = safeLink(entry.evidence[0], t('evidence'), 'row-source-link'); if (evidenceLink) source.append(evidenceLink); }
@@ -233,11 +244,16 @@ function renderSubscriptions() {
   const subscriptions = state.subscriptions || [];
   const fragment = document.createDocumentFragment();
   for (const sub of subscriptions) {
+    const official = isOfficialSubscription(sub);
+    const cachedCount = (state.entries || []).filter((entry) => entry.source === sub.id).length;
     const card = element('article', undefined, 'card subscription-item');
-    const info = element('div', undefined, 'sub-info'); info.append(element('h3', sub.name || sub.url));
+    const info = element('div', undefined, 'sub-info');
+    info.append(element('h3', official ? t('officialList') : sub.name || sub.url));
+    if (official) info.append(element('span', t('officialReadOnly'), 'badge neutral'));
     const link = safeLink(sub.url, sub.url); if (link) info.append(link);
-    const meta = element('div', undefined, 'sub-meta'); meta.append(element('span', t('entriesCount', { count: sub.count ?? (state.entries || []).filter((entry) => entry.source === sub.id).length })), element('span', t('lastUpdated', { time: dateText(sub.updatedAt) }))); info.append(meta);
-    if (sub.error) info.append(element('p', sub.error, 'sub-error'));
+    const meta = element('div', undefined, 'sub-meta'); meta.append(element('span', t('entriesCount', { count: sub.count ?? cachedCount })), element('span', t('lastUpdated', { time: dateText(sub.updatedAt) })), element('span', t(sub.enabled === false ? 'entryDisabled' : 'entryEnabled'))); info.append(meta);
+    if (official) info.append(element('p', t('officialSelectionNote'), 'footnote'));
+    if (sub.error) { info.append(element('p', sub.error, 'sub-error')); if (cachedCount) info.append(element('p', t('cachedListKept', { count: cachedCount }), 'footnote')); }
     const remove = element('button', t('remove'), 'button secondary small'); remove.dataset.removeSubscription = sub.id;
     card.append(element('div', '↻', 'sub-icon'), info, remove); fragment.append(card);
   }
@@ -345,8 +361,6 @@ onClick('capture-import', async () => { const result = await request('IMPORT_CAP
 $('subscription-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => {
   const url = $('sub-url').value.trim(); let parsed; try { parsed = new URL(url); } catch { throw new Error(t('badRawUrl')); }
   if (parsed.protocol !== 'https:' || parsed.hostname !== 'raw.githubusercontent.com' || parsed.username || parsed.password || parsed.port) throw new Error(t('badRawUrl'));
-  const granted = await chrome.permissions.request({ origins: ['https://raw.githubusercontent.com/*'] });
-  if (!granted) throw new Error(t('permissionsDenied'));
   await request('ADD_SUBSCRIPTION', { url, name: $('sub-name').value.trim() }); $('sub-name').value = ''; $('sub-url').value = ''; toast(t('subscribed'));
 }, event.submitter); });
 onClick('sync-now', async () => { await request('SYNC'); toast(t('syncSuccess')); });

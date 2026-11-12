@@ -1,8 +1,62 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {initialState,normalizeHandle,normalizeEntry,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
+import {initialState as createInitialState,installOfficialSubscription,normalizeHandle,normalizeEntry,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
+import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_LIST_VERSION,OFFICIAL_SEED} from '../extension/lib/official-list.js';
+
+// Most identity cases intentionally exercise only their synthetic targets.
+const initialState=()=>({...createInitialState(),entries:[],subscriptions:[]});
 
 const entry=(handle,extra={})=>({handle,source:'local',status:'approved',reason:'',evidence:[],...extra});
+
+test('fresh state includes the official numeric seed but no execution consent or jobs',()=>{
+  const state=createInitialState();
+  assert.equal(OFFICIAL_SEED.entries.length,523);assert.equal(state.entries.length,523);
+  assert.equal(state.subscriptions.length,1);assert.equal(state.subscriptions[0].id,OFFICIAL_SUBSCRIPTION_ID);
+  assert.equal(state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(state.subscriptions[0].enabled,true);assert.equal(state.subscriptions[0].count,523);
+  assert.ok(state.entries.every(row=>row.source===OFFICIAL_SUBSCRIPTION_ID&&row.status==='approved'&&typeof row.id==='string'&&/^[1-9]\d{0,24}$/.test(row.id)));
+  assert.deepEqual(state.entries.map(({handle,id})=>({handle,id})),OFFICIAL_SEED.entries);
+  assert.equal(state.settings.accountId,'');assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);assert.deepEqual(state.queue,[]);
+  assert.equal(state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(effectiveEntries(state).length,523);
+  state.entries[0].handle='modified';assert.notEqual(createInitialState().entries[0].handle,'modified');assert.notEqual(OFFICIAL_SEED.entries[0].handle,'modified');
+});
+
+test('one-time official migration preserves private state and does not restore a deleted subscription',()=>{
+  const state=initialState();delete state.officialListVersion;
+  Object.assign(state.settings,{accountHandle:'owner',accountId:'9001',autoBlock:true});state.paused=true;state.pauseReason='Keep my pause';
+  state.entries=[entry('private',{id:'123',status:'pending',reason:'Private annotation'})];state.allowlist=['private'];
+  state.queue=[{id:'prior',handle:'private',userId:'123',accountId:'9001',status:'done'}];state.nativeBlocked={'id:9001':{'id:123':{handle:'private'}}};
+  const previous=structuredClone(state);assert.equal(installOfficialSubscription(state),true);
+  for(const key of ['settings','paused','pauseReason','queue','nativeBlocked','allowlist'])assert.deepEqual(state[key],previous[key]);
+  assert.deepEqual(state.entries[0],previous.entries[0]);assert.equal(state.entries.length,524);assert.equal(state.officialListVersion,OFFICIAL_LIST_VERSION);
+  state.subscriptions=[];state.entries=state.entries.filter(row=>row.source==='local');const removed=structuredClone(state);
+  assert.equal(installOfficialSubscription(state),false);assert.deepEqual(state,removed);
+  state.officialListVersion=OFFICIAL_LIST_VERSION+1;assert.equal(installOfficialSubscription(state),false);assert.equal(state.subscriptions.length,0);
+});
+
+test('official migration preserves existing disabled or empty caches and deduplicates URL sources',()=>{
+  for(const enabled of [false,true]){
+    const state=initialState();delete state.officialListVersion;
+    state.subscriptions=[{id:'existing',url:OFFICIAL_SUBSCRIPTION_URL,enabled,name:'My name',count:0,updatedAt:'2026-01-01'}];
+    const previous=structuredClone(state.subscriptions[0]);installOfficialSubscription(state);
+    assert.deepEqual(state.subscriptions,[previous]);assert.deepEqual(state.entries,[],'An existing empty curator cache is not replaced by the packaged seed');
+  }
+  const state=initialState();delete state.officialListVersion;
+  state.subscriptions=[{id:'older',url:OFFICIAL_SUBSCRIPTION_URL,enabled:true},{id:'disabled',url:OFFICIAL_SUBSCRIPTION_URL,enabled:false,name:'Keep disabled'},{id:'other',url:'https://raw.githubusercontent.com/o/r/main/other.json',enabled:true}];
+  state.entries=[entry('excluded_old',{id:'123',source:'older'}),entry('retained',{id:'456',source:'disabled'}),entry('private',{id:'789'})];state.allowlist=['excluded_old'];
+  installOfficialSubscription(state);
+  assert.deepEqual(state.subscriptions.map(sub=>sub.id),['disabled','other']);assert.equal(state.subscriptions[0].enabled,false);
+  assert.deepEqual(state.entries.map(row=>row.handle),['retained','private']);assert.deepEqual(state.allowlistPins,{excluded_old:['123']});
+});
+
+test('official migration never replaces an unrelated source ID or overfills existing entries',()=>{
+  const state=initialState();delete state.officialListVersion;
+  state.subscriptions=[{id:OFFICIAL_SUBSCRIPTION_ID,url:'https://raw.githubusercontent.com/o/r/main/other.json',enabled:false}];
+  state.entries=[entry('unrelated',{source:OFFICIAL_SUBSCRIPTION_ID})];installOfficialSubscription(state);
+  const official=state.subscriptions.find(sub=>sub.url===OFFICIAL_SUBSCRIPTION_URL);
+  assert.notEqual(official.id,OFFICIAL_SUBSCRIPTION_ID);assert.equal(state.entries[0].handle,'unrelated');assert.equal(state.entries[0].source,OFFICIAL_SUBSCRIPTION_ID);
+  const full=initialState();delete full.officialListVersion;full.entries=Array.from({length:MAX_ENTRIES},(_,i)=>entry(`fixture${i}`));
+  const previous=structuredClone(full.entries);installOfficialSubscription(full);assert.deepEqual(full.entries,previous);assert.equal(full.subscriptions[0].count,0);assert.match(full.subscriptions[0].error,/20,000/);
+});
 
 test('uncertain writes preserve their original actor and numeric target across list and account changes',()=>{
   const s=initialState();s.settings.accountId='9001';s.settings.accountHandle='owner';s.entries=[entry('target',{id:'111'})];

@@ -1,4 +1,4 @@
-import {SCHEMA,MAX_BYTES,MAX_ENTRIES,now,uid,initialState,normalizeHandle,safeEvidence,parseImport,mergeLocal,effectiveEntries,enqueueApproved,reconcileQueue,recordBlocked,retryFailed,retainAllowlistIdentities,csvExport,subscriptionURL,accountKey,jobAccountKey} from './lib/core.js';
+import {SCHEMA,MAX_BYTES,MAX_ENTRIES,now,uid,initialState,installOfficialSubscription,normalizeHandle,safeEvidence,parseImport,mergeLocal,effectiveEntries,enqueueApproved,reconcileQueue,recordBlocked,retryFailed,retainAllowlistIdentities,csvExport,subscriptionURL,accountKey,jobAccountKey} from './lib/core.js';
 import {createXApiAdapter, XApiError} from './lib/x-api.js';
 import {createXSessionProvider} from './lib/x-session.js';
 import {prepareStorage,stateBytes,RECOVERY_BUDGET} from './lib/storage-budget.js';
@@ -20,7 +20,9 @@ function resetInterruptedSession(state) {
 }
 async function readState() {
   const {state}=await chrome.storage.local.get('state');
-  const result=state ? {...initialState(),...state,settings:{...initialState().settings,...state.settings}} : initialState();
+  const defaults=initialState();
+  const result=state ? {...defaults,...state,entries:state.entries??[],subscriptions:state.subscriptions??[],officialListVersion:state.officialListVersion,settings:{...defaults.settings,...state.settings}} : defaults;
+  if(state)installOfficialSubscription(result);
   if(state&&state.executorVersion!=='x-api-v1'){
     result.executorVersion='x-api-v1';result.version=2;
     result.settings.accountId='';result.settings.sessionInvalid=true;result.settings.autoBlock=false;
@@ -60,8 +62,8 @@ async function initializeSession() {
 const ready=initializeSession();
 // Register handlers synchronously; await initialization inside each handler.
 ready.catch(error=>console.error('Guga initialization failed:',error.message));
-chrome.runtime.onInstalled.addListener(()=>{void ready.then(()=>setup());});
-chrome.runtime.onStartup.addListener(()=>{void ready.then(async()=>{await setup();await schedule();});});
+chrome.runtime.onInstalled.addListener(()=>ready.then(async()=>{await setup();await syncAll();}).catch(error=>console.error('Guga subscription refresh failed:',error.message)));
+chrome.runtime.onStartup.addListener(()=>ready.then(async()=>{await setup();await schedule();await syncAll();}).catch(error=>console.error('Guga subscription refresh failed:',error.message)));
 
 function validateXTab(tab,state,path) {
   let url;try{url=new URL(tab?.url);}catch{}
@@ -108,7 +110,7 @@ async function syncOne(id) {
       const nextEntries=[...retained,...parsed.entries.map(e=>({...e,source:id}))];
       retainAllowlistIdentities(state,nextEntries);state.entries=nextEntries;
       Object.assign(live,{updatedAt:now(),error:'',count:parsed.entries.length});state.lastSync=now();reconcileQueue(state);
-      if(state.settings.autoBlock&&state.settings.accountHandle)enqueueApproved(state);
+      if(state.settings.autoBlock&&validId(state.settings.accountId)&&!state.settings.sessionInvalid)enqueueApproved(state);
       log(state,'subscription-updated','',`${live.name}: ${parsed.entries.length}`);
     });
   } catch(err) {await mutate(state=>{const live=state.subscriptions.find(s=>s.id===id);if(live)live.error=err.message;log(state,'subscription-error','',err.message);});}
@@ -281,7 +283,7 @@ async function handle(message,sender) {
         const identity=await xApi.verifyAccount();
         if(!validId(identity.accountId))throw new Error('X did not verify a numeric execution account.');
         const account=normalizeHandle(identity.handle);
-        return await mutate(state=>{
+        const result=await mutate(state=>{
           if(state.lastConnection?.requestId!==requestId)throw new Error('A newer connection request replaced this one.');
           if(state.queue.some(j=>j.status==='running'))throw new Error('Pause the current operation before reconnecting.');
           state.settings.accountHandle=account;state.settings.accountId=identity.accountId;state.settings.sessionInvalid=false;
@@ -290,6 +292,10 @@ async function handle(message,sender) {
           // Reconnecting cannot erase a persisted budget or rate-limit deadline.
           budgetWrites(state);reconcileQueue(state);log(state,'account-connected',account);
         });
+        // The bundled/last good list is immediately available. A slow GitHub
+        // refresh must not delay a verified connection or require an open popup.
+        void syncAll().catch(error=>console.error('Guga subscription refresh failed:',error.message));
+        return result;
       }catch(error){
         await mutate(state=>{if(state.lastConnection?.requestId===requestId){state.lastConnection={...state.lastConnection,status:'failed',at:now(),error:errorText(error)};state.paused=true;state.settings.autoBlock=false;state.settings.sessionInvalid=true;state.pauseReason=state.lastConnection.error;if(error.kind==='rate_limit')noteCooldown(state,'rate_limit',error.retryAt);else if(['auth','account_changed'].includes(error.kind))noteCooldown(state,'auth',Date.now()+60000);}});
         throw error;

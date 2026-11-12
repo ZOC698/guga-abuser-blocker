@@ -1,23 +1,26 @@
-# Public subscription list
+# Public subscription list · 0.2.3
 
-`guga-blocklist.json` is the stable subscription file. It is published only by authorized maintainers; the extension is a read-only subscriber, accepts no PAT and cannot upload local data. Subscriber list PRs are not the publication workflow. It remains empty. Local imports are enabled immediately for private use in 0.2.2, which does not publish them. An empty list is valid and adds no blocking targets. This repository does not contain the private source list.
+`guga-blocklist.json` is the source for the default enabled official subscription and its packaged starting copy. The initial 523 accounts were selected by the owner from imported blocking preferences and authorized for publication as minimal `{handle,id}` rows. Inclusion is not an independently verified finding of abuse. The extension only reads this file, accepts no PAT and cannot upload local data or modify the public branch. Only maintainers with GitHub write permission can publish changes; subscriber list PRs are not the publication workflow.
 
-中文：数字 ID 可随后补齐；先使用当前用户名。只有人工审核为 `approved`、填写明确原因并附至少一条 HTTPS 证据链接的账号，才可发布。`pending` 和 `excluded` 不会进入订阅文件。用户名可能改名或被重新使用，维护者需要更新映射。
+中文：初始 523 条是所有者授权公开的屏蔽偏好，不代表已独立核实虐待行为。只发布用户名和精确数字 ID，不编造理由或证据。维护者选定的条目无需额外批准状态；如明确写了 `pending` 或 `excluded`，仍会排除。
 
-日本語：数値 ID は後から追加できます。現在のユーザー名を使い、理由と HTTPS の根拠リンクを付けて確認済みとした項目だけ公開します。確認待ち・除外済みの項目は配信しません。ユーザー名変更や再利用は管理者による確認が必要です。
+日本語：最初の 523 件は所有者が公開を許可したブロック設定であり、虐待行為の独立した確認結果ではありません。ユーザー名と正確な数値 ID のみを公開し、理由や根拠を捏造しません。選択した項目に追加の承認状態は不要ですが、明示された `pending`・`excluded` は除外します。
 
-The publication validator is stricter than the extension's general import format: every published row requires a nonempty reason and at least one evidence link. A valid link is not proof that its claim is true; a maintainer must review the source. Numeric IDs are optional strings, never numbers.
+Only `handle` is required per public row; `id`, `reason` and `evidence` are optional. IDs must be strings, never numbers. Supplied reasons and HTTPS links are checked for format, not truth. The builder omits blank optional context and never fills it with invented content.
 
-From the repository root, build only publication-reviewed entries from a separate private review file kept **outside this repository**. A local extension backup's `approved` status means enabled for personal use and does not establish that publication review occurred:
+From the repository root, build an explicitly selected maintainer input kept **outside this repository**, then regenerate the packaged copy:
 
 ```sh
-node scripts/build-list.mjs --review /absolute/path/to/private-review.json
+node scripts/build-list.mjs --input /absolute/path/to/selected-list.json
 node scripts/validate-list.mjs lists/guga-blocklist.json
+npm run sync:official
+npm run check
+npm run package
 ```
 
-On Windows, quote paths containing spaces. `--output`, `--name` and `--updated-at` are optional. Supplying a UTC `--updated-at` gives reproducible output; rows are always sorted by lowercase handle. The builder validates every approved row before replacing the public file, strips private metadata, rejects duplicate handles/IDs and refuses to overwrite its private input. No network requests or upload occur.
+On Windows, quote paths containing spaces. `--output`, `--name` and `--updated-at` are optional. Supplying a UTC `--updated-at` gives reproducible output; rows are sorted by lowercase handle. The builder validates selected rows before replacing the public file, strips private metadata, rejects duplicate handles/IDs and refuses to overwrite its input. `--review` remains an input alias. The build and seed synchronization commands do not publish or upload. Do not edit `extension/lib/official-list.js` manually; the project check requires it to match this JSON.
 
-After reviewing the diff, commit this file to the same path. Once the repository is published, subscribers use this fixed address:
+Inspect the diff, then publish this file at the same path through the maintainer's repository access. The extension reads this fixed address:
 
 ```text
 https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blocklist.json
@@ -25,4 +28,4 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 Verify that address returns the intended JSON before sharing it. Updating the file retains the subscription location. Removal prevents future list matches but does not reverse blocks already applied on X.
 
-To remove an entry, mark its private record `excluded`, add a private note if needed, rebuild, then review and commit the resulting diff. Do not publish private notes, original imports, complete account block histories, or access tokens. CI checks public format and code only; it does not decide whether an account belongs in the list.
+To remove an entry, remove it from the selected input or mark it `excluded`, rebuild and synchronize the packaged copy, then commit the resulting diff. Publish only the selected public fields; omit private notes, original working exports and access tokens. CI checks format and code, not whether an account has engaged in abuse.

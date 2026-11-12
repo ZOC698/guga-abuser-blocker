@@ -15,4 +15,5 @@ for(const file of walk(extension)){
   }
 }
 if(manifest.permissions.some(p=>!['storage','alarms','cookies'].includes(p)))throw new Error('Unexpected privilege');
+execFileSync(process.execPath,[path.join(root,'scripts/sync-official-list.mjs'),'--check'],{stdio:'inherit'});
 console.log('Manifest, linked assets, script syntax and CSP checks passed.');

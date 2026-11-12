@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Guga community public blocklist v1",
-  "description": "Repository publication contract. Private review metadata is not permitted. Numeric IDs may be added later.",
+  "description": "Owner-selected blocking preferences. A handle is required; numeric IDs and descriptive context are optional. Private metadata is not permitted. Inclusion is not an independently verified finding of abuse.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "name", "updatedAt", "entries"],
@@ -15,7 +15,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["handle", "reason", "evidence"],
+        "required": ["handle"],
         "properties": {
           "handle": {"type": "string", "pattern": "^[a-z0-9_]{1,15}$", "not": {"enum": ["home", "explore", "notifications", "messages", "settings", "search", "compose", "intent", "i", "login", "logout", "signup", "tos", "privacy"]}},
           "id": {"type": "string", "pattern": "^\\d{1,25}$"},

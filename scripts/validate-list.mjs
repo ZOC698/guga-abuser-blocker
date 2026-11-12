@@ -28,10 +28,10 @@ export function validatePublicEntry(entry, index = 0) {
   requireKeys(entry, entryKeys, label);
   if (typeof entry.handle !== 'string' || normalizeHandle(entry.handle) !== entry.handle) throw new Error(`${label}: handle must be a lowercase username without @.`);
   if (Object.hasOwn(entry, 'id') && (typeof entry.id !== 'string' || !/^\d{1,25}$/.test(entry.id))) throw new Error(`${label}: optional id must be a decimal string.`);
-  if (typeof entry.reason !== 'string' || !entry.reason.trim() || entry.reason.length > 1000 || entry.reason !== entry.reason.trim()) throw new Error(`${label}: a reviewed reason of 1–1,000 characters is required.`);
-  if (!Array.isArray(entry.evidence) || entry.evidence.length < 1 || entry.evidence.length > 10) throw new Error(`${label}: provide 1–10 HTTPS evidence links.`);
+  if (Object.hasOwn(entry, 'reason') && (typeof entry.reason !== 'string' || !entry.reason.trim() || entry.reason.length > 1000 || entry.reason !== entry.reason.trim())) throw new Error(`${label}: optional reason must contain 1–1,000 trimmed characters.`);
+  if (Object.hasOwn(entry, 'evidence') && (!Array.isArray(entry.evidence) || entry.evidence.length < 1 || entry.evidence.length > 10)) throw new Error(`${label}: optional evidence must contain 1–10 HTTPS links.`);
   const evidence = new Set();
-  for (const value of entry.evidence) {
+  for (const value of entry.evidence ?? []) {
     let url;
     try { url = new URL(value); } catch { throw new Error(`${label}: evidence must be an HTTPS URL.`); }
     if (typeof value !== 'string' || value.length > 2048 || !value.startsWith('https://') || /\s/.test(value) || url.protocol !== 'https:' || url.username || url.password) throw new Error(`${label}: evidence must be an HTTPS URL without embedded credentials.`);

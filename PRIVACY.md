@@ -1,6 +1,6 @@
 # Privacy · 隐私 · プライバシー
 
-Version 0.2.2 preview · 2026-11-12
+Version 0.2.3 preview · 2026-11-12
 
 **Popup drafts:** management form drafts and navigation are retained in extension `storage.session` for the current browser session. Drafts stay in this browser and are not published. Connection outcomes are retained in local extension state so closing the popup does not hide a failed attempt.
 
@@ -12,7 +12,9 @@ Version 0.2.2 preview · 2026-11-12
 
 **Import behavior:** local imports become enabled without a separate review step; explicitly re-importing matching disabled entries enables them again. Importing does not enable the global automatic-blocking switch, resume a paused queue, remove exceptions or upload entries. When automatic blocking is already enabled and the queue is running, eligible imported entries with numeric IDs can be processed using the connected X account.
 
-**Read-only subscriptions:** the extension reads the public GitHub Raw JSON URLs you add, without credentials. It has no GitHub write or public-list upload feature, does not accept a PAT, and does not send local entries to maintainers. GitHub receives normal request information, such as your IP address. Repository owners control publishing separately.
+**Read-only subscriptions:** the official subscription is enabled by default, includes a packaged starting copy, and requires GitHub Raw read permission for updates. The extension reads it and any additional public JSON URLs without credentials. It has no GitHub write or public-list upload feature, does not accept a PAT, and does not send local entries to maintainers. GitHub receives normal request information, such as your IP address. Only maintainers with repository write access can publish changes.
+
+**Published starting list:** the owner authorized sharing 523 imported blocking preferences as public handle/ID pairs. These are not independently verified findings of abuse, and no reasons or evidence have been fabricated. The selected public pairs are included in the repository and package; original working exports, private notes, settings and session data are not included. Subscriber imports and edits remain local.
 
 **X access:** native blocking uses X’s web internal API through the signed-in session. It no longer clicks profile menus. The extension checks numeric identities and reads back the blocking relationship before recording success. A browser X login is required; no X password, developer API key or GitHub PAT is entered into the extension. This is not developer OAuth authorization. X can change these internal endpoints. Content scripts still support local hiding and optional visible-list capture.
 
@@ -26,7 +28,9 @@ Version 0.2.2 preview · 2026-11-12
 
 本地导入后直接启用，无需额外审核；主动重新导入匹配的已停用条目会重新启用。导入不会打开全局自动拉黑开关、恢复暂停队列、移除例外或上传条目。若自动拉黑已开启且队列正在运行，带数字 ID 并符合条件的导入条目可以通过已连接的 X 账号自动处理。
 
-订阅只有读取功能：以不带认证信息的请求读取你添加的公开 GitHub Raw JSON。扩展没有 GitHub 写入、公共名单上传功能，不接收 PAT，也不把本地条目发送给维护者。GitHub 会收到 IP 地址等普通请求信息；公共发布由仓库维护者独立控制。
+官方订阅默认启用，附带初始名单副本，并需要 GitHub Raw 读取权限获取更新。它和额外添加的公开 JSON 都通过不带认证信息的请求读取。扩展没有 GitHub 写入、公共名单上传功能，不接收 PAT，也不把本地条目发送给维护者。GitHub 会收到 IP 地址等普通请求信息；只有有仓库写权限的维护者能够发布修改。
+
+名单所有者已授权将 523 条导入屏蔽偏好以公开用户名/数字 ID 对分享。这不代表已独立核实虐待行为，不补写或编造理由、证据。选定的公开字段包含在仓库和安装包中，原始工作导出、私人备注、设置和会话数据不包含在内。订阅者的导入和编辑仍留在本地。
 
 原生拉黑通过已登录会话调用 X 网页内部接口，不再点击用户主页菜单；核对数字身份并读回拉黑关系后才记录成功。需要在浏览器登录 X，无需向扩展输入 X 密码、开发者密钥或 GitHub PAT；这不是开发者 OAuth 授权，内部接口可能随 X 更新变化。内容脚本仍用于本地隐藏与可选的可见名单采集。
 
@@ -42,7 +46,9 @@ Version 0.2.2 preview · 2026-11-12
 
 ローカル取り込みは別の確認操作なしで有効になり、明示的な再取り込みは一致する無効項目も再び有効にします。取り込みは自動ブロックの全体設定をオンにせず、一時停止の解除、例外の削除、アップロードも行いません。自動ブロックがオンで待機列が動いていれば、数値 ID があり条件を満たす項目を接続中の X アカウントで自動処理できます。
 
-購読は読み取り専用です。追加した公開 GitHub Raw JSON を認証情報なしで取得します。GitHub 書き込みや公開リストのアップロード機能はなく、PAT を受け付けず、ローカル項目を管理者に送りません。GitHub には IP アドレスなど通常の通信情報が届きます。公開はリポジトリ管理者が別途管理します。
+公式購読は初めから有効で初期リストを同梱し、更新のため GitHub Raw の読み取り権限が必要です。公式および追加の公開 JSON は認証情報なしで取得します。GitHub 書き込みや公開リストのアップロード機能はなく、PAT を受け付けず、ローカル項目を管理者に送りません。GitHub には IP アドレスなど通常の通信情報が届きます。書き込み権限を持つ管理者だけが変更を公開できます。
+
+所有者は、取り込んだ 523 件のブロック設定を公開ユーザー名・数値 ID の組として共有することを許可しています。虐待行為が独立に確認されたという意味ではなく、理由や根拠は作成・捏造していません。選択した公開項目をリポジトリとパッケージに含め、元の作業用エクスポート、非公開メモ、設定、セッション情報は含めません。購読者の取り込みや編集はローカルに保存されます。
 
 ブロックにはログイン済みセッションから X のウェブ内部 API を使用し、プロフィールのメニューはクリックしません。数値 ID とブロック関係を確認してから成功を記録します。ブラウザーでの X ログインは必要ですが、X パスワード・開発者キー・GitHub PAT を拡張機能に入力する必要はありません。開発者 OAuth 認可ではなく、内部 API は X の更新で変更される可能性があります。コンテンツスクリプトは非表示や任意の表示済み一覧収集に使用します。
 

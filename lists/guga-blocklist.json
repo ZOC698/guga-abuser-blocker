@@ -1,6 +1,2099 @@
 {
   "schema": "guga-blocklist/v1",
-  "name": "Guga community blocklist",
-  "updatedAt": "2026-11-12T03:20:23.416Z",
-  "entries": []
+  "name": "Guga official blocklist",
+  "updatedAt": "2026-11-12T07:31:12.690Z",
+  "entries": [
+    {
+      "handle": "0_y_g",
+      "id": "968633649183670272"
+    },
+    {
+      "handle": "0ic6uehrnv90527",
+      "id": "1899734335600865280"
+    },
+    {
+      "handle": "0iwdyp",
+      "id": "1518460808929644544"
+    },
+    {
+      "handle": "0lgnq",
+      "id": "2113546754373332992"
+    },
+    {
+      "handle": "0xkingskuan",
+      "id": "1416454684525662215"
+    },
+    {
+      "handle": "0xqiubite",
+      "id": "1519232507383664645"
+    },
+    {
+      "handle": "100xmart",
+      "id": "1845604867043446784"
+    },
+    {
+      "handle": "113rapid",
+      "id": "939506468755185664"
+    },
+    {
+      "handle": "1208_takoyaki",
+      "id": "1944220249739743232"
+    },
+    {
+      "handle": "12kgmr31",
+      "id": "2022608243911200770"
+    },
+    {
+      "handle": "15erhocf6n8czt4",
+      "id": "1476452948641476610"
+    },
+    {
+      "handle": "227end_hero",
+      "id": "1606816246435319809"
+    },
+    {
+      "handle": "2_wa_ka_aa",
+      "id": "1462308805794930690"
+    },
+    {
+      "handle": "3owdowntome",
+      "id": "1277120538805067777"
+    },
+    {
+      "handle": "51131063400",
+      "id": "2565368004"
+    },
+    {
+      "handle": "5310_e721",
+      "id": "1733733023341056000"
+    },
+    {
+      "handle": "535dj5mj",
+      "id": "1604482474532560896"
+    },
+    {
+      "handle": "5nc1xrtkut64646",
+      "id": "1755577745369976832"
+    },
+    {
+      "handle": "666pxxxq999",
+      "id": "1659722862197104640"
+    },
+    {
+      "handle": "66udev1pcr52780",
+      "id": "2050094394167152640"
+    },
+    {
+      "handle": "7095110mank",
+      "id": "2037118548292886531"
+    },
+    {
+      "handle": "7iznfk",
+      "id": "2088538739740119040"
+    },
+    {
+      "handle": "7kqakrfbsr67107",
+      "id": "1944017897267113984"
+    },
+    {
+      "handle": "8jy5h",
+      "id": "2089538067304730624"
+    },
+    {
+      "handle": "8ywkj",
+      "id": "2064658282275655680"
+    },
+    {
+      "handle": "919ball",
+      "id": "1387644673703874561"
+    },
+    {
+      "handle": "_kaihatsuhikaru",
+      "id": "2032430600234405888"
+    },
+    {
+      "handle": "_maniazk25",
+      "id": "1895084249885351937"
+    },
+    {
+      "handle": "a0cjreez9p2144",
+      "id": "1784217452806897664"
+    },
+    {
+      "handle": "a3734589",
+      "id": "1781956365873033216"
+    },
+    {
+      "handle": "a7yw8drvutklspy",
+      "id": "1542422104846454784"
+    },
+    {
+      "handle": "a9474814484331",
+      "id": "1926191525941170176"
+    },
+    {
+      "handle": "a995b305d8df67f",
+      "id": "1164569032323768320"
+    },
+    {
+      "handle": "aaste393788",
+      "id": "2035088006433185794"
+    },
+    {
+      "handle": "adamasmc",
+      "id": "1771526733336125440"
+    },
+    {
+      "handle": "adayo119",
+      "id": "1572557801830117377"
+    },
+    {
+      "handle": "ado257fish",
+      "id": "1912437182020874242"
+    },
+    {
+      "handle": "agugugaga_love",
+      "id": "2091117147087118336"
+    },
+    {
+      "handle": "ai_xiaomu",
+      "id": "885347162233610242"
+    },
+    {
+      "handle": "aidogamantakesi",
+      "id": "2030583789941092352"
+    },
+    {
+      "handle": "aikousaikou",
+      "id": "2089872850215968768"
+    },
+    {
+      "handle": "aim2k_",
+      "id": "1532427644087767041"
+    },
+    {
+      "handle": "airy1121",
+      "id": "2050931343127945216"
+    },
+    {
+      "handle": "aiyamaueo",
+      "id": "3012462302"
+    },
+    {
+      "handle": "ammit_z",
+      "id": "1159748299416592384"
+    },
+    {
+      "handle": "ana_muccio72295",
+      "id": "1869186647843340288"
+    },
+    {
+      "handle": "andy20001222",
+      "id": "1278233455893942273"
+    },
+    {
+      "handle": "asak_0918",
+      "id": "2068914574829756416"
+    },
+    {
+      "handle": "avt6c31jng",
+      "id": "2058714588523421696"
+    },
+    {
+      "handle": "azumashiyo",
+      "id": "1758783186740690944"
+    },
+    {
+      "handle": "b62pebqjrb1404",
+      "id": "1819017750687457280"
+    },
+    {
+      "handle": "b8fhogpg9w17737",
+      "id": "2055894600276127744"
+    },
+    {
+      "handle": "bacon1979945560",
+      "id": "1702844514258341888"
+    },
+    {
+      "handle": "bad_gu2gu1ga3ga",
+      "id": "2086329568672219136"
+    },
+    {
+      "handle": "bio_mania1",
+      "id": "1980250294996127745"
+    },
+    {
+      "handle": "blakegggg810",
+      "id": "2068003823806025728"
+    },
+    {
+      "handle": "bluebird1025",
+      "id": "1557015640221024257"
+    },
+    {
+      "handle": "bluegugugaga",
+      "id": "1916188997375954948"
+    },
+    {
+      "handle": "bluegugugaga2",
+      "id": "2116828945341681664"
+    },
+    {
+      "handle": "bodiplo",
+      "id": "1596428281"
+    },
+    {
+      "handle": "bonjore0809",
+      "id": "1803004851573669888"
+    },
+    {
+      "handle": "bonkura_penguin",
+      "id": "2027695287289118720"
+    },
+    {
+      "handle": "btc_daxiong888",
+      "id": "1654457531123785728"
+    },
+    {
+      "handle": "cadpig_ssbu",
+      "id": "1215111409555533824"
+    },
+    {
+      "handle": "caozlog",
+      "id": "877141452"
+    },
+    {
+      "handle": "cc88888888888cc",
+      "id": "1826167808540946432"
+    },
+    {
+      "handle": "chaaahandaisk",
+      "id": "2057029808215994369"
+    },
+    {
+      "handle": "cherylnatsu",
+      "id": "188330055"
+    },
+    {
+      "handle": "chiyokirami",
+      "id": "1181510651904049152"
+    },
+    {
+      "handle": "ci5wwl",
+      "id": "2057574019285815296"
+    },
+    {
+      "handle": "clubstep_mania",
+      "id": "1671785798285561857"
+    },
+    {
+      "handle": "cokin_hikamar",
+      "id": "2080910947758350336"
+    },
+    {
+      "handle": "coolmintsbro",
+      "id": "1487814577958105089"
+    },
+    {
+      "handle": "cqse7hhpkrsdglx",
+      "id": "1185898070975766529"
+    },
+    {
+      "handle": "crab_mani",
+      "id": "2104055852844085248"
+    },
+    {
+      "handle": "crazygugugagas",
+      "id": "2058420281639882752"
+    },
+    {
+      "handle": "cri2tivno",
+      "id": "2087076749368848384"
+    },
+    {
+      "handle": "crybaby28crew",
+      "id": "1725305004196528128"
+    },
+    {
+      "handle": "csf1349",
+      "id": "1491003958978314240"
+    },
+    {
+      "handle": "cyberkanjousen",
+      "id": "1918274202580467713"
+    },
+    {
+      "handle": "d0bx1jcr5f16345",
+      "id": "2039675349059932160"
+    },
+    {
+      "handle": "d_uoduo",
+      "id": "2910579462"
+    },
+    {
+      "handle": "daiki06222222",
+      "id": "2098929694230142976"
+    },
+    {
+      "handle": "daiwa111",
+      "id": "2585896471"
+    },
+    {
+      "handle": "dby1jx",
+      "id": "2109538091623223296"
+    },
+    {
+      "handle": "derlerburki",
+      "id": "1593902293748957184"
+    },
+    {
+      "handle": "dingyi",
+      "id": "50683"
+    },
+    {
+      "handle": "dojou_mania",
+      "id": "2097985001942122496"
+    },
+    {
+      "handle": "dol_misaki",
+      "id": "4852187294"
+    },
+    {
+      "handle": "doro213003doro",
+      "id": "2035602805231427584"
+    },
+    {
+      "handle": "dqubjyejgy22393",
+      "id": "1805568047207563265"
+    },
+    {
+      "handle": "dreams_realites",
+      "id": "1629803122473447424"
+    },
+    {
+      "handle": "dsbigwhale",
+      "id": "2046487398645919744"
+    },
+    {
+      "handle": "dvtyqvozxuv1ssi",
+      "id": "1260100076413673473"
+    },
+    {
+      "handle": "dyymvk2xta93517",
+      "id": "1755727294583468033"
+    },
+    {
+      "handle": "e9mc24lywavzfe0",
+      "id": "1328562048821768194"
+    },
+    {
+      "handle": "ea50t",
+      "id": "2106369356930383872"
+    },
+    {
+      "handle": "ebichili_ex123",
+      "id": "2039559579801976832"
+    },
+    {
+      "handle": "educ_mania",
+      "id": "1775677493074337792"
+    },
+    {
+      "handle": "ehu0f000",
+      "id": "2087182469657395200"
+    },
+    {
+      "handle": "erina1260245",
+      "id": "1704711720391098368"
+    },
+    {
+      "handle": "exlr1l",
+      "id": "2082012586539888640"
+    },
+    {
+      "handle": "expiorecrypto",
+      "id": "1862861227090911232"
+    },
+    {
+      "handle": "exterminateguga",
+      "id": "1724430356474912768"
+    },
+    {
+      "handle": "f00yb5ihi151609",
+      "id": "1796094381071675392"
+    },
+    {
+      "handle": "fkukos8",
+      "id": "2046156117361700864"
+    },
+    {
+      "handle": "flo5wd",
+      "id": "2082452114253795328"
+    },
+    {
+      "handle": "foresight_os",
+      "id": "1242020275320832003"
+    },
+    {
+      "handle": "france_mania",
+      "id": "1934894273847283716"
+    },
+    {
+      "handle": "freemusicman",
+      "id": "2116386688910147584"
+    },
+    {
+      "handle": "freespeechlion",
+      "id": "1554998808056311808"
+    },
+    {
+      "handle": "fuga_sakana",
+      "id": "2005947317879558144"
+    },
+    {
+      "handle": "fugumani7095110",
+      "id": "2077346956175941632"
+    },
+    {
+      "handle": "furiousclown",
+      "id": "1561229698755366912"
+    },
+    {
+      "handle": "furusatosatoimo",
+      "id": "1869764450812928000"
+    },
+    {
+      "handle": "fuwaro0902",
+      "id": "2090694732989276160"
+    },
+    {
+      "handle": "fvhwxovyff40303",
+      "id": "1759798767824584704"
+    },
+    {
+      "handle": "g5cag_penguin",
+      "id": "1327782681493454848"
+    },
+    {
+      "handle": "g63743906",
+      "id": "1526911815640567810"
+    },
+    {
+      "handle": "gabchennn",
+      "id": "2016034470579875840"
+    },
+    {
+      "handle": "gaijidesu112315",
+      "id": "2061782359989768192"
+    },
+    {
+      "handle": "gaijyuhater",
+      "id": "2115647424048021504"
+    },
+    {
+      "handle": "gat_x303b",
+      "id": "1610603365372923904"
+    },
+    {
+      "handle": "gaysex_mania",
+      "id": "1115304222340202496"
+    },
+    {
+      "handle": "gemig_life",
+      "id": "1768973638567661568"
+    },
+    {
+      "handle": "gengzishunli",
+      "id": "918716499254132736"
+    },
+    {
+      "handle": "genpats_mania",
+      "id": "1855241438390595584"
+    },
+    {
+      "handle": "geri_gerita",
+      "id": "2080891588839165952"
+    },
+    {
+      "handle": "ggggauau",
+      "id": "2090071333887725569"
+    },
+    {
+      "handle": "ggggiaot",
+      "id": "2077942321719693313"
+    },
+    {
+      "handle": "gggglab2026",
+      "id": "2097586648808841216"
+    },
+    {
+      "handle": "ggghet5",
+      "id": "2045421636258824192"
+    },
+    {
+      "handle": "gggklove444",
+      "id": "2101665343378972672"
+    },
+    {
+      "handle": "gingakeidesuko",
+      "id": "2102341140569845760"
+    },
+    {
+      "handle": "gldslva",
+      "id": "2080613188727701504"
+    },
+    {
+      "handle": "god_reganess",
+      "id": "1766121844623675392"
+    },
+    {
+      "handle": "goh_7fpooi",
+      "id": "1375800984136425476"
+    },
+    {
+      "handle": "gokigoki1006",
+      "id": "1905878248388751360"
+    },
+    {
+      "handle": "goobychoopy",
+      "id": "1944975157933604864"
+    },
+    {
+      "handle": "goodjob689",
+      "id": "2077943498582724608"
+    },
+    {
+      "handle": "googlenogizyutu",
+      "id": "2072970746457210880"
+    },
+    {
+      "handle": "gou_mania",
+      "id": "2067246757021712384"
+    },
+    {
+      "handle": "grass911311",
+      "id": "711770913478463488"
+    },
+    {
+      "handle": "grayovmq",
+      "id": "2103787154224918528"
+    },
+    {
+      "handle": "gs0ekfptpiq8ica",
+      "id": "1510816477745905665"
+    },
+    {
+      "handle": "gsrmaniavgk8",
+      "id": "2084277947696123904"
+    },
+    {
+      "handle": "gu_marugaga",
+      "id": "1827353368324665345"
+    },
+    {
+      "handle": "gubg2whjgubg",
+      "id": "2052405859255476224"
+    },
+    {
+      "handle": "guga69587",
+      "id": "2083721946764918784"
+    },
+    {
+      "handle": "guga_execution",
+      "id": "2087172154110746624"
+    },
+    {
+      "handle": "gugaecchigugu",
+      "id": "2098243861898563584"
+    },
+    {
+      "handle": "gugagapunisher",
+      "id": "1932514178"
+    },
+    {
+      "handle": "gugaguga_no",
+      "id": "2090368018979364864"
+    },
+    {
+      "handle": "gugagugafack",
+      "id": "2091139183905755136"
+    },
+    {
+      "handle": "gugaissh1t",
+      "id": "1887294868009193472"
+    },
+    {
+      "handle": "gugarecipe",
+      "id": "2103178693271224320"
+    },
+    {
+      "handle": "gugu_gyaku_gaga",
+      "id": "2077625077093568512"
+    },
+    {
+      "handle": "gugu_suicide",
+      "id": "2066214262276780032"
+    },
+    {
+      "handle": "gugugaga171110",
+      "id": "2045470003051536384"
+    },
+    {
+      "handle": "gugugaga37564",
+      "id": "2119300057099112448"
+    },
+    {
+      "handle": "gugugaga56su",
+      "id": "1959190116515319808"
+    },
+    {
+      "handle": "gugugaga7uzy",
+      "id": "2116477810835664896"
+    },
+    {
+      "handle": "gugugaga_ai",
+      "id": "2105577344815767553"
+    },
+    {
+      "handle": "gugugaga_fuck",
+      "id": "2105442406942621696"
+    },
+    {
+      "handle": "gugugaga_gomi",
+      "id": "2089652461745430528"
+    },
+    {
+      "handle": "gugugaga_l0ve",
+      "id": "1757341281775497216"
+    },
+    {
+      "handle": "gugugaga_sad",
+      "id": "2041894295498592256"
+    },
+    {
+      "handle": "gugugaga_sad2",
+      "id": "2087750717528506369"
+    },
+    {
+      "handle": "gugugagacute",
+      "id": "2106213969010839552"
+    },
+    {
+      "handle": "gugugagaday",
+      "id": "2057388702029287425"
+    },
+    {
+      "handle": "gugugagafamily",
+      "id": "2118692149588058114"
+    },
+    {
+      "handle": "gugugagagomi",
+      "id": "2089963050300485632"
+    },
+    {
+      "handle": "gugugagaha53",
+      "id": "2093706491052339200"
+    },
+    {
+      "handle": "gugugagahater",
+      "id": "2096696432137064448"
+    },
+    {
+      "handle": "gugugagahunter",
+      "id": "2093044724345266176"
+    },
+    {
+      "handle": "gugugagakawaii",
+      "id": "2089599233162964992"
+    },
+    {
+      "handle": "gugugagakimoi",
+      "id": "2109481837538197504"
+    },
+    {
+      "handle": "gugugagakorosu",
+      "id": "1844964498576453632"
+    },
+    {
+      "handle": "gugugagalover",
+      "id": "2107493763258142720"
+    },
+    {
+      "handle": "gugugagasukix",
+      "id": "1397162589205909508"
+    },
+    {
+      "handle": "gugugas",
+      "id": "2090021215306231809"
+    },
+    {
+      "handle": "gugugyagu",
+      "id": "2097907462095687680"
+    },
+    {
+      "handle": "gugugyaku_racer",
+      "id": "1455307751316344833"
+    },
+    {
+      "handle": "gugugyakuyou",
+      "id": "2102520336776654848"
+    },
+    {
+      "handle": "guguisobserving",
+      "id": "2105456840943534080"
+    },
+    {
+      "handle": "gugukatsu",
+      "id": "703242833969295360"
+    },
+    {
+      "handle": "gugupyon",
+      "id": "1504084802684694532"
+    },
+    {
+      "handle": "gugyakun",
+      "id": "2071938503362097152"
+    },
+    {
+      "handle": "guluguluai",
+      "id": "2105558554551971840"
+    },
+    {
+      "handle": "h4136308310968",
+      "id": "2051927005587726341"
+    },
+    {
+      "handle": "h_ako526",
+      "id": "1736257535257305088"
+    },
+    {
+      "handle": "hakaba_nobuhiko",
+      "id": "1135163661993988098"
+    },
+    {
+      "handle": "haknqvag",
+      "id": "2099798127352152064"
+    },
+    {
+      "handle": "hamuziiiiiin",
+      "id": "1295491070126522371"
+    },
+    {
+      "handle": "hamuzinn000",
+      "id": "1701130221448237056"
+    },
+    {
+      "handle": "hanrenxiadiyu",
+      "id": "1448786274064732160"
+    },
+    {
+      "handle": "haruk5958510",
+      "id": "1684143204147535873"
+    },
+    {
+      "handle": "hatimania2",
+      "id": "1703367962936418304"
+    },
+    {
+      "handle": "hdzs056",
+      "id": "1533304127274745856"
+    },
+    {
+      "handle": "hemohemobin",
+      "id": "1320299105575264261"
+    },
+    {
+      "handle": "hemurigon",
+      "id": "1244179762957828096"
+    },
+    {
+      "handle": "henryxiao_sj",
+      "id": "757755643759439872"
+    },
+    {
+      "handle": "hhqze9h4i8izfaf",
+      "id": "1546463158553829376"
+    },
+    {
+      "handle": "hikakia_mania",
+      "id": "1989772071883485184"
+    },
+    {
+      "handle": "hikakin",
+      "id": "130447415"
+    },
+    {
+      "handle": "hikakin_monica",
+      "id": "1977272684280266753"
+    },
+    {
+      "handle": "hikamers_unko2",
+      "id": "1828418314818985984"
+    },
+    {
+      "handle": "himalaya_bear1",
+      "id": "904399518862647298"
+    },
+    {
+      "handle": "himoka_thu",
+      "id": "1270779967828135936"
+    },
+    {
+      "handle": "hiro_orchid0708",
+      "id": "1441924696501469191"
+    },
+    {
+      "handle": "hizkehenkosen",
+      "id": "2030245249587798016"
+    },
+    {
+      "handle": "hnxesunu5d39184",
+      "id": "1866825571675889664"
+    },
+    {
+      "handle": "hobonomercy",
+      "id": "1770715447396286464"
+    },
+    {
+      "handle": "hoenofol",
+      "id": "2085585525596192768"
+    },
+    {
+      "handle": "hsl551",
+      "id": "1463153794250776577"
+    },
+    {
+      "handle": "huangfeihung27",
+      "id": "2106015902215069696"
+    },
+    {
+      "handle": "huanusa",
+      "id": "1841931514369445888"
+    },
+    {
+      "handle": "hxiehhong",
+      "id": "1854262255"
+    },
+    {
+      "handle": "i_say_gfy",
+      "id": "501740045"
+    },
+    {
+      "handle": "iat1pv6zqg25626",
+      "id": "1932079491582754816"
+    },
+    {
+      "handle": "icydk2x3lc36623",
+      "id": "2006977491571978245"
+    },
+    {
+      "handle": "ifburgerking",
+      "id": "2008910212011556864"
+    },
+    {
+      "handle": "ikkitosen348329",
+      "id": "1642760565675421697"
+    },
+    {
+      "handle": "ikuya811",
+      "id": "2049476384834424832"
+    },
+    {
+      "handle": "inntegra_mania",
+      "id": "2073244052720599040"
+    },
+    {
+      "handle": "insect_mania640",
+      "id": "2083507831559565312"
+    },
+    {
+      "handle": "instantsta53355",
+      "id": "1668835801642270720"
+    },
+    {
+      "handle": "ishitorapyit",
+      "id": "2089935427629420544"
+    },
+    {
+      "handle": "islam_mania",
+      "id": "2059412869259882496"
+    },
+    {
+      "handle": "iun9v9",
+      "id": "1891332614516314112"
+    },
+    {
+      "handle": "ivanutor",
+      "id": "2044777990672830464"
+    },
+    {
+      "handle": "j7610003972310",
+      "id": "1865763589434589184"
+    },
+    {
+      "handle": "jackkao91228805",
+      "id": "1518693236344487936"
+    },
+    {
+      "handle": "jackzho7941435",
+      "id": "1944884395825139712"
+    },
+    {
+      "handle": "jajia",
+      "id": "34293595"
+    },
+    {
+      "handle": "jannatun111111",
+      "id": "1822517863279935488"
+    },
+    {
+      "handle": "jdsijp",
+      "id": "2096536898512822272"
+    },
+    {
+      "handle": "jhhhjkkoo",
+      "id": "2055235524202541056"
+    },
+    {
+      "handle": "jkeba21_mania",
+      "id": "1764569071994236928"
+    },
+    {
+      "handle": "jobdtn3q6j32ufd",
+      "id": "4273241774"
+    },
+    {
+      "handle": "johnsmithogmi",
+      "id": "1976492962331701249"
+    },
+    {
+      "handle": "jomasun",
+      "id": "6024922"
+    },
+    {
+      "handle": "jr2764013444230",
+      "id": "1975763441832108032"
+    },
+    {
+      "handle": "jrfreightef65",
+      "id": "2080250905530884096"
+    },
+    {
+      "handle": "jsudwzihek81271",
+      "id": "1819598708516048898"
+    },
+    {
+      "handle": "jumpingkvsv",
+      "id": "2086333708441899008"
+    },
+    {
+      "handle": "just_sharon7",
+      "id": "1516124892718002178"
+    },
+    {
+      "handle": "jwzjlh6cbc78226",
+      "id": "1809872744429080576"
+    },
+    {
+      "handle": "kabokin_mania",
+      "id": "1978601298955321344"
+    },
+    {
+      "handle": "kancal_manaia",
+      "id": "2097892132002693120"
+    },
+    {
+      "handle": "kanikin_mania10",
+      "id": "1647490779919826944"
+    },
+    {
+      "handle": "kanita_mania1",
+      "id": "2085030233456115712"
+    },
+    {
+      "handle": "kasateto_mania2",
+      "id": "2064996552943579136"
+    },
+    {
+      "handle": "kawa_yosi7508",
+      "id": "2034429844520603649"
+    },
+    {
+      "handle": "kawairail",
+      "id": "1664558995384971266"
+    },
+    {
+      "handle": "kazutel263041",
+      "id": "1828370533186224128"
+    },
+    {
+      "handle": "kbtit_tnp",
+      "id": "2070156436362162176"
+    },
+    {
+      "handle": "ke281q",
+      "id": "2096523229485727744"
+    },
+    {
+      "handle": "keipt2w",
+      "id": "2108167900934901760"
+    },
+    {
+      "handle": "kerry7018",
+      "id": "2837546611"
+    },
+    {
+      "handle": "kihu1hrnxe26878",
+      "id": "2052345764609953793"
+    },
+    {
+      "handle": "kikeigugugaga",
+      "id": "1818780151754469376"
+    },
+    {
+      "handle": "kmursroltyihhow",
+      "id": "1019568271211708420"
+    },
+    {
+      "handle": "ko05_mania",
+      "id": "1905599130254409734"
+    },
+    {
+      "handle": "koibuki_god",
+      "id": "2055266100188008448"
+    },
+    {
+      "handle": "koryakubonmania",
+      "id": "2052738920236924930"
+    },
+    {
+      "handle": "kriscpht",
+      "id": "730537752706486272"
+    },
+    {
+      "handle": "kuma0728fighte2",
+      "id": "2984201118"
+    },
+    {
+      "handle": "kuramoto_mania",
+      "id": "1977718023189585920"
+    },
+    {
+      "handle": "kurenaifuture",
+      "id": "610433421"
+    },
+    {
+      "handle": "kusogaga53",
+      "id": "2034640571395190784"
+    },
+    {
+      "handle": "kusogaga_",
+      "id": "1730781689134350336"
+    },
+    {
+      "handle": "kvmaztlye237033",
+      "id": "1981254936722870272"
+    },
+    {
+      "handle": "l1m1vy",
+      "id": "2070000199033077760"
+    },
+    {
+      "handle": "larryn1693",
+      "id": "1779072252061143040"
+    },
+    {
+      "handle": "larryng1204",
+      "id": "1188361458469355521"
+    },
+    {
+      "handle": "lee655775645007",
+      "id": "2023456574057181184"
+    },
+    {
+      "handle": "legendaryfagot",
+      "id": "1851375429761773568"
+    },
+    {
+      "handle": "liaoping2020",
+      "id": "1310002309099851776"
+    },
+    {
+      "handle": "lifeprohelper",
+      "id": "1589820654068838402"
+    },
+    {
+      "handle": "liu_nan_nan",
+      "id": "1961425958277373952"
+    },
+    {
+      "handle": "lll202501",
+      "id": "1880503722721345536"
+    },
+    {
+      "handle": "longqidui369",
+      "id": "1665220151720181760"
+    },
+    {
+      "handle": "losty3254_0",
+      "id": "2089921159764852736"
+    },
+    {
+      "handle": "lpafkrr",
+      "id": "1823658757806792704"
+    },
+    {
+      "handle": "luke102579",
+      "id": "1401189743333765120"
+    },
+    {
+      "handle": "lunauc6",
+      "id": "1854789176493039616"
+    },
+    {
+      "handle": "m1rmd9z3u1c0ke",
+      "id": "1561383017074987008"
+    },
+    {
+      "handle": "maidonfreedom",
+      "id": "1883854200104456192"
+    },
+    {
+      "handle": "maitian99",
+      "id": "23282083"
+    },
+    {
+      "handle": "majimafi_mania",
+      "id": "1954388064740204544"
+    },
+    {
+      "handle": "makore_gg4n",
+      "id": "2085505145937506304"
+    },
+    {
+      "handle": "maoshen",
+      "id": "1154174763918606339"
+    },
+    {
+      "handle": "marazzo411",
+      "id": "2038476988135149568"
+    },
+    {
+      "handle": "mariokrasimiro6",
+      "id": "1497909518650466311"
+    },
+    {
+      "handle": "mat736528",
+      "id": "2072882166581837824"
+    },
+    {
+      "handle": "mattya_koutya1",
+      "id": "2014334670612402176"
+    },
+    {
+      "handle": "matuyamasore4",
+      "id": "1959245676967231488"
+    },
+    {
+      "handle": "mayxhen",
+      "id": "24900570"
+    },
+    {
+      "handle": "mclaren1_mania",
+      "id": "2005256811188989953"
+    },
+    {
+      "handle": "megu_the_star",
+      "id": "1761013093386293248"
+    },
+    {
+      "handle": "meguminsama2009",
+      "id": "1557846379736666113"
+    },
+    {
+      "handle": "membawhenu",
+      "id": "1960833752336359429"
+    },
+    {
+      "handle": "mese_mania1910",
+      "id": "1840047429825245186"
+    },
+    {
+      "handle": "mesuikiver810",
+      "id": "2065675140508372992"
+    },
+    {
+      "handle": "mg08tonde13",
+      "id": "1954829461410754560"
+    },
+    {
+      "handle": "michael_myerrs",
+      "id": "2115363368542654465"
+    },
+    {
+      "handle": "midomarukun0202",
+      "id": "1976572631525838848"
+    },
+    {
+      "handle": "midomarusub",
+      "id": "2047469303646371841"
+    },
+    {
+      "handle": "mie7vkrb2v72028",
+      "id": "1976293580454211584"
+    },
+    {
+      "handle": "ministerevil",
+      "id": "3293838802"
+    },
+    {
+      "handle": "misstang1102",
+      "id": "1559822189632929792"
+    },
+    {
+      "handle": "miusei1611",
+      "id": "1657542967840899072"
+    },
+    {
+      "handle": "miyahei584103",
+      "id": "1802312396683534336"
+    },
+    {
+      "handle": "motgatagata",
+      "id": "2085740393493303296"
+    },
+    {
+      "handle": "mplocke",
+      "id": "43186094"
+    },
+    {
+      "handle": "mrswim_teramoto",
+      "id": "1764686124054937600"
+    },
+    {
+      "handle": "mtl911_s",
+      "id": "2039968963740729345"
+    },
+    {
+      "handle": "mud_so",
+      "id": "2572359889"
+    },
+    {
+      "handle": "musasi19190721",
+      "id": "1821094297795723264"
+    },
+    {
+      "handle": "mximokg",
+      "id": "2062194788103790592"
+    },
+    {
+      "handle": "myao86",
+      "id": "874994178542813185"
+    },
+    {
+      "handle": "mzorfqijvlwdfm4",
+      "id": "1551104670554537985"
+    },
+    {
+      "handle": "n4vqeonr4h15370",
+      "id": "2004858820871569408"
+    },
+    {
+      "handle": "namaire_114514",
+      "id": "1990214989307875328"
+    },
+    {
+      "handle": "namyu_0113",
+      "id": "815886739256377344"
+    },
+    {
+      "handle": "namyu_a4",
+      "id": "2018239128559857664"
+    },
+    {
+      "handle": "nanatanatauchm",
+      "id": "2083097975069585408"
+    },
+    {
+      "handle": "nashi_mania",
+      "id": "2095016553171603456"
+    },
+    {
+      "handle": "nasusubisu",
+      "id": "1825514815751856128"
+    },
+    {
+      "handle": "natomani759",
+      "id": "1950902569284575232"
+    },
+    {
+      "handle": "ncky_d_mgjrv",
+      "id": "235579120"
+    },
+    {
+      "handle": "negitonkotu980",
+      "id": "1473612798706221059"
+    },
+    {
+      "handle": "nekoneko_2015",
+      "id": "2002332262097207296"
+    },
+    {
+      "handle": "nenonenoaa",
+      "id": "1777644038558289920"
+    },
+    {
+      "handle": "newgyagyagyaggk",
+      "id": "2118107956457979904"
+    },
+    {
+      "handle": "newyorkgugugu",
+      "id": "606811776"
+    },
+    {
+      "handle": "nexvolt_ai",
+      "id": "1775798864580374528"
+    },
+    {
+      "handle": "nezumiiiiiiiii0",
+      "id": "2059527180347232256"
+    },
+    {
+      "handle": "ni_agent",
+      "id": "1736391295554433024"
+    },
+    {
+      "handle": "nikianna_love",
+      "id": "2063531296887054336"
+    },
+    {
+      "handle": "ningqian6688",
+      "id": "2009099899003170816"
+    },
+    {
+      "handle": "nisemani",
+      "id": "1943447461953179649"
+    },
+    {
+      "handle": "nlz7efnb8j47485",
+      "id": "1828685468768280576"
+    },
+    {
+      "handle": "no_hikaniti",
+      "id": "1862871211790774272"
+    },
+    {
+      "handle": "noel1004edd",
+      "id": "697419577811075072"
+    },
+    {
+      "handle": "nosyo_mania",
+      "id": "1909248230485098496"
+    },
+    {
+      "handle": "not_real_shosan",
+      "id": "1638031862898757632"
+    },
+    {
+      "handle": "np6tftzftv60442",
+      "id": "1873381511145381888"
+    },
+    {
+      "handle": "nt_xd28441",
+      "id": "1996312879633727488"
+    },
+    {
+      "handle": "ognoprivate",
+      "id": "1683004731969671168"
+    },
+    {
+      "handle": "ohamedo_lee",
+      "id": "1835340094171160576"
+    },
+    {
+      "handle": "ojc97h",
+      "id": "2060258064704651264"
+    },
+    {
+      "handle": "okasa0427",
+      "id": "1929851399443304448"
+    },
+    {
+      "handle": "okayamasigeru",
+      "id": "2031331753508646912"
+    },
+    {
+      "handle": "okayamasigeru3",
+      "id": "2086051116043948032"
+    },
+    {
+      "handle": "okitaorutasan",
+      "id": "3319871646"
+    },
+    {
+      "handle": "onanir_mania",
+      "id": "1959831761166434304"
+    },
+    {
+      "handle": "one_things_all",
+      "id": "1736369845963567104"
+    },
+    {
+      "handle": "osanayande",
+      "id": "1637028375276720131"
+    },
+    {
+      "handle": "osanpotatsuro87",
+      "id": "2086818483111944193"
+    },
+    {
+      "handle": "osufu1250",
+      "id": "2081739040840355840"
+    },
+    {
+      "handle": "parfectgugu",
+      "id": "2116114804247318528"
+    },
+    {
+      "handle": "penpainapoooo",
+      "id": "1892170964898816000"
+    },
+    {
+      "handle": "pi246833",
+      "id": "2027937925972029440"
+    },
+    {
+      "handle": "pika_1919",
+      "id": "1262253514681507840"
+    },
+    {
+      "handle": "pkmnyj",
+      "id": "1964594746585911296"
+    },
+    {
+      "handle": "pky5vnvskg03ohw",
+      "id": "1443526830384762889"
+    },
+    {
+      "handle": "poko_uta",
+      "id": "1238324280145788929"
+    },
+    {
+      "handle": "qy3ex",
+      "id": "2081123089098907648"
+    },
+    {
+      "handle": "ra9q86atb519417",
+      "id": "2053175118369820672"
+    },
+    {
+      "handle": "ralsei_mania",
+      "id": "1916372702740508672"
+    },
+    {
+      "handle": "realcodedalpha",
+      "id": "1204726205548679168"
+    },
+    {
+      "handle": "rebma23579",
+      "id": "2088841577053687808"
+    },
+    {
+      "handle": "remiliagamer201",
+      "id": "1911335379464273920"
+    },
+    {
+      "handle": "ren97_",
+      "id": "1962038961326682112"
+    },
+    {
+      "handle": "res_marxczx",
+      "id": "2059152840539701248"
+    },
+    {
+      "handle": "rgby13",
+      "id": "552459416"
+    },
+    {
+      "handle": "rheh2sseb099251",
+      "id": "1920744199286345728"
+    },
+    {
+      "handle": "rikorisu687095",
+      "id": "1760602939734003712"
+    },
+    {
+      "handle": "riyadhbro1",
+      "id": "1620767740050145289"
+    },
+    {
+      "handle": "roh5zmmh7690680",
+      "id": "2008376062124978216"
+    },
+    {
+      "handle": "roundlinground",
+      "id": "2082084650814672896"
+    },
+    {
+      "handle": "rrmaoxeg",
+      "id": "2091176442965217280"
+    },
+    {
+      "handle": "ruru05290116",
+      "id": "1895988233823272965"
+    },
+    {
+      "handle": "ryosukekagi",
+      "id": "1962795007750086657"
+    },
+    {
+      "handle": "rzoxifccsy16137",
+      "id": "1933696897656725504"
+    },
+    {
+      "handle": "s09571742",
+      "id": "948475816089812992"
+    },
+    {
+      "handle": "sa14eyslsv13325",
+      "id": "2032859553310928896"
+    },
+    {
+      "handle": "sabakan1943",
+      "id": "1759888913773346816"
+    },
+    {
+      "handle": "saensmania5oo86",
+      "id": "1867572496758980608"
+    },
+    {
+      "handle": "sanamilmi",
+      "id": "2040755725937582080"
+    },
+    {
+      "handle": "sanpurusantaro",
+      "id": "2095886773931081728"
+    },
+    {
+      "handle": "santumedia",
+      "id": "1418604967594651648"
+    },
+    {
+      "handle": "sapphire_mania",
+      "id": "1786364174316314624"
+    },
+    {
+      "handle": "schizoidzeru",
+      "id": "1988170930095616004"
+    },
+    {
+      "handle": "schmiddaily",
+      "id": "892221264"
+    },
+    {
+      "handle": "setu7_qgg",
+      "id": "1584133523190870017"
+    },
+    {
+      "handle": "sg_takanawa",
+      "id": "1881251320428179456"
+    },
+    {
+      "handle": "shanghaojin",
+      "id": "858124064476479488"
+    },
+    {
+      "handle": "sharksabu777",
+      "id": "2086736340134354944"
+    },
+    {
+      "handle": "shentong2016",
+      "id": "716252838947635201"
+    },
+    {
+      "handle": "shigure_destroy",
+      "id": "1408466081845374980"
+    },
+    {
+      "handle": "shikahon_mania",
+      "id": "2092984157425287168"
+    },
+    {
+      "handle": "shikk0217",
+      "id": "2038262949437976576"
+    },
+    {
+      "handle": "shirayuki2602",
+      "id": "1810622956412059648"
+    },
+    {
+      "handle": "shiromitama_nia",
+      "id": "2077761233248567296"
+    },
+    {
+      "handle": "shou_sss",
+      "id": "2605241750"
+    },
+    {
+      "handle": "showinshin",
+      "id": "1830240164305887232"
+    },
+    {
+      "handle": "silvertengu",
+      "id": "2043150081117822976"
+    },
+    {
+      "handle": "skaas777",
+      "id": "1680105152"
+    },
+    {
+      "handle": "slbanetum",
+      "id": "1936359849094430720"
+    },
+    {
+      "handle": "smithsoogx",
+      "id": "2089831628986060800"
+    },
+    {
+      "handle": "sokoranojuumin",
+      "id": "1636966443869941761"
+    },
+    {
+      "handle": "soranlan",
+      "id": "1070281907349479424"
+    },
+    {
+      "handle": "st53125",
+      "id": "2941747620"
+    },
+    {
+      "handle": "sukatidi",
+      "id": "981192994350133249"
+    },
+    {
+      "handle": "suomani_miyoho",
+      "id": "2066453698021388288"
+    },
+    {
+      "handle": "superflyer29950",
+      "id": "1679279543511826433"
+    },
+    {
+      "handle": "superkracy",
+      "id": "1519492491120189440"
+    },
+    {
+      "handle": "susib5a",
+      "id": "2021446289431592965"
+    },
+    {
+      "handle": "suyu2018block",
+      "id": "1380720896038424579"
+    },
+    {
+      "handle": "suzutuba03",
+      "id": "2086592250847584256"
+    },
+    {
+      "handle": "sypi_learning",
+      "id": "1718908801146126336"
+    },
+    {
+      "handle": "sz__mania",
+      "id": "2092193409356435456"
+    },
+    {
+      "handle": "taiko_otaaaaaku",
+      "id": "2039169027780603904"
+    },
+    {
+      "handle": "takithubo",
+      "id": "358152879"
+    },
+    {
+      "handle": "takkun_mania",
+      "id": "2095035746323447808"
+    },
+    {
+      "handle": "tama_mania",
+      "id": "1850483264886390784"
+    },
+    {
+      "handle": "tamachan_089",
+      "id": "2087106998144045056"
+    },
+    {
+      "handle": "tamurahd2019719",
+      "id": "1424576351630098437"
+    },
+    {
+      "handle": "tasu_jr7",
+      "id": "1915693354140262401"
+    },
+    {
+      "handle": "tb24kyxnmb75553",
+      "id": "2004057361737232384"
+    },
+    {
+      "handle": "teikoku_mania",
+      "id": "1939830839736770561"
+    },
+    {
+      "handle": "teikoku_mania3",
+      "id": "2086873461243396096"
+    },
+    {
+      "handle": "thebyan_mania",
+      "id": "2042866504853524480"
+    },
+    {
+      "handle": "thechairman1945",
+      "id": "1647138324958842880"
+    },
+    {
+      "handle": "thushison",
+      "id": "2083437654629371904"
+    },
+    {
+      "handle": "tohokudesuyo",
+      "id": "2041480797493075970"
+    },
+    {
+      "handle": "tokamania",
+      "id": "1969365742643789830"
+    },
+    {
+      "handle": "totoreu1",
+      "id": "1036956870697611269"
+    },
+    {
+      "handle": "totoreu2",
+      "id": "2088807519552708608"
+    },
+    {
+      "handle": "trash_mania8",
+      "id": "3223432153"
+    },
+    {
+      "handle": "tsuki_akari458",
+      "id": "1922534762667003904"
+    },
+    {
+      "handle": "ttlmtlvpxk69004",
+      "id": "1974511903096582144"
+    },
+    {
+      "handle": "ttttyyxt5r",
+      "id": "2096992907626762240"
+    },
+    {
+      "handle": "tu_77777",
+      "id": "2102010264933834752"
+    },
+    {
+      "handle": "tukaeruhikamani",
+      "id": "1897932792245501952"
+    },
+    {
+      "handle": "tunaman484356",
+      "id": "1829928240431185921"
+    },
+    {
+      "handle": "tunotti4545",
+      "id": "2016825004944711680"
+    },
+    {
+      "handle": "twitch35396947",
+      "id": "1600744417958453249"
+    },
+    {
+      "handle": "u9ljiy",
+      "id": "2102006905799602176"
+    },
+    {
+      "handle": "ultraman_mannii",
+      "id": "2072966590023475200"
+    },
+    {
+      "handle": "uma50810",
+      "id": "1996609481774673921"
+    },
+    {
+      "handle": "umibudoumania",
+      "id": "1820675855418564608"
+    },
+    {
+      "handle": "unnkon76033",
+      "id": "2028748435021815808"
+    },
+    {
+      "handle": "unuseddatano098",
+      "id": "1649966998141509637"
+    },
+    {
+      "handle": "uoxht",
+      "id": "2088833306389614592"
+    },
+    {
+      "handle": "urawadaiaman",
+      "id": "1680793006633553920"
+    },
+    {
+      "handle": "urotiromakan",
+      "id": "970432908275064832"
+    },
+    {
+      "handle": "usuishiro_space",
+      "id": "2077784542174474240"
+    },
+    {
+      "handle": "uurbomsh8719028",
+      "id": "2035286348157140992"
+    },
+    {
+      "handle": "v1ohv0",
+      "id": "1743135568857628672"
+    },
+    {
+      "handle": "vanzjacob1",
+      "id": "1634283350516027404"
+    },
+    {
+      "handle": "veseu21",
+      "id": "1482157954107428874"
+    },
+    {
+      "handle": "vgkaj",
+      "id": "2090716247185104896"
+    },
+    {
+      "handle": "vmnlfl777",
+      "id": "2056509650552729600"
+    },
+    {
+      "handle": "vo6rjujr7p65706",
+      "id": "2050177777887014912"
+    },
+    {
+      "handle": "vroboros_",
+      "id": "1073587283746586624"
+    },
+    {
+      "handle": "w6mklsm",
+      "id": "2098387256948248576"
+    },
+    {
+      "handle": "wangchangfu88",
+      "id": "949316104144457729"
+    },
+    {
+      "handle": "wantoukotuskin",
+      "id": "1999461299240206341"
+    },
+    {
+      "handle": "warning_working",
+      "id": "1910320405530972160"
+    },
+    {
+      "handle": "wawawa9640",
+      "id": "2096574555833921536"
+    },
+    {
+      "handle": "wawawwwwee",
+      "id": "2086480786002411520"
+    },
+    {
+      "handle": "wd0medqsu7sw6cf",
+      "id": "1453325570758959112"
+    },
+    {
+      "handle": "wefrr9a0k694818",
+      "id": "2033877088755978241"
+    },
+    {
+      "handle": "williamlong",
+      "id": "2786701"
+    },
+    {
+      "handle": "wrzzc",
+      "id": "2115055834145435648"
+    },
+    {
+      "handle": "ws1tmz",
+      "id": "2079941291157393408"
+    },
+    {
+      "handle": "wwwwwlp9g",
+      "id": "2057364642738139136"
+    },
+    {
+      "handle": "x4iauzl7lelsdkn",
+      "id": "1472230815409262592"
+    },
+    {
+      "handle": "xd4jf54wzw25673",
+      "id": "1950043900623933441"
+    },
+    {
+      "handle": "xgjnh5",
+      "id": "1834123104534364162"
+    },
+    {
+      "handle": "xiaoxiaomiduo",
+      "id": "1595763550701568000"
+    },
+    {
+      "handle": "xiaoyixianyuing",
+      "id": "1962340449043324928"
+    },
+    {
+      "handle": "xie_xiao_zheng",
+      "id": "1447081508208984068"
+    },
+    {
+      "handle": "xlqqht3y4a6450",
+      "id": "1819771070670630912"
+    },
+    {
+      "handle": "xq6lju",
+      "id": "2079081270332821504"
+    },
+    {
+      "handle": "xxi5olc",
+      "id": "1992678247050457088"
+    },
+    {
+      "handle": "xzzzjpl",
+      "id": "1575767611165798403"
+    },
+    {
+      "handle": "y4kkk6178",
+      "id": "1939683067666563072"
+    },
+    {
+      "handle": "y59681250",
+      "id": "1421628213088841729"
+    },
+    {
+      "handle": "yabxh8cz9w32297",
+      "id": "1822688633960497153"
+    },
+    {
+      "handle": "yachi_iro",
+      "id": "2087110546625892352"
+    },
+    {
+      "handle": "yae_mania0409",
+      "id": "2013975811926429697"
+    },
+    {
+      "handle": "yamadaitirguela",
+      "id": "2051805175002923008"
+    },
+    {
+      "handle": "yanki_mania",
+      "id": "2087838139369046016"
+    },
+    {
+      "handle": "yasai831777",
+      "id": "1565675405990064128"
+    },
+    {
+      "handle": "yeager17587081",
+      "id": "1721034853423214592"
+    },
+    {
+      "handle": "yibbf06",
+      "id": "1886080302432595968"
+    },
+    {
+      "handle": "yj9972",
+      "id": "2076152621707218944"
+    },
+    {
+      "handle": "ym57393",
+      "id": "1529774589290881024"
+    },
+    {
+      "handle": "yodel_mania",
+      "id": "2010320667598872576"
+    },
+    {
+      "handle": "yodo8192",
+      "id": "2107723475939205120"
+    },
+    {
+      "handle": "yoshi827k",
+      "id": "2095847288728166400"
+    },
+    {
+      "handle": "youkilime1",
+      "id": "2040375078198849536"
+    },
+    {
+      "handle": "young852560",
+      "id": "1999426877119942656"
+    },
+    {
+      "handle": "youngkin_mania",
+      "id": "2090312719211823104"
+    },
+    {
+      "handle": "yudora4444",
+      "id": "1962414749960019968"
+    },
+    {
+      "handle": "yukibow",
+      "id": "64385055"
+    },
+    {
+      "handle": "yutian_blue",
+      "id": "1072837502732566529"
+    },
+    {
+      "handle": "yuu0606_al",
+      "id": "2050606926397104128"
+    },
+    {
+      "handle": "yuui171350",
+      "id": "2027958952173166592"
+    },
+    {
+      "handle": "z3ggx",
+      "id": "2079984300628627456"
+    },
+    {
+      "handle": "zb1spcx",
+      "id": "1646180703921655809"
+    },
+    {
+      "handle": "zbob1995",
+      "id": "2012513310151774208"
+    },
+    {
+      "handle": "zcoqid",
+      "id": "2092405331339227136"
+    },
+    {
+      "handle": "zein_mania",
+      "id": "1923032975614279681"
+    },
+    {
+      "handle": "zhufengme",
+      "id": "31635898"
+    },
+    {
+      "handle": "ziyouban_rabbit",
+      "id": "1956978408191348736"
+    },
+    {
+      "handle": "zzycjb",
+      "id": "1547142628181159936"
+    },
+    {
+      "handle": "zzzggg6a",
+      "id": "2095476783462424576"
+    }
+  ]
 }

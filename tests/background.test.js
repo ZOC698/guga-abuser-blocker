@@ -1,7 +1,11 @@
 import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
-import {initialState,effectiveEntries} from '../extension/lib/core.js';
+import {initialState as createInitialState,effectiveEntries} from '../extension/lib/core.js';
+import {OFFICIAL_SUBSCRIPTION_ID,OFFICIAL_SUBSCRIPTION_URL,OFFICIAL_LIST_VERSION,OFFICIAL_SEED} from '../extension/lib/official-list.js';
 import {STATE_BUDGET,stateBytes} from '../extension/lib/storage-budget.js';
+
+// Keep existing safety cases isolated from the bundled public targets.
+const initialState=()=>({...createInitialState(),entries:[],subscriptions:[]});
 
 const RealDate=Date;let clock=RealDate.now();
 globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}};
@@ -10,7 +14,7 @@ const ACCOUNT='9007199254740993',OTHER_ACCOUNT='9007199254740997',TARGET='900719
 const SCREEN_PATH='/i/api/graphql/AMIBMjtxEEATh4z8V9GtRg/UserByScreenName',REST_PATH='/i/api/graphql/mxaYWwt52eAb6OAzYHMVzg/UserByRestId';
 const VIEWER_PATH='/i/api/graphql/TpQxQtWMTMnIAMPlMGMqNw/Viewer';
 const VIEWER_FEATURES={subscriptions_upsells_api_enabled:false,profile_label_improvements_pcf_label_in_post_enabled:true,responsive_web_profile_redirect_enabled:true,rweb_tipjar_consumption_enabled:false,verified_phone_label_enabled:false,creator_subscriptions_tweet_preview_api_enabled:true,responsive_web_graphql_timeline_navigation_enabled:true};
-let storage={state:initialState()},session={},listener,alarmListener,startupListener,cookieListener,alarms=new Map();
+let storage={state:initialState()},session={},listener,alarmListener,startupListener,installedListener,cookieListener,alarms=new Map();
 let cookieAccount=ACCOUNT,cookieCSRF=CSRF,cookieHook=null,cookieReads=[],requests=[],tabCalls=[],fetchHook=null,blocked=new Set(),serial=0;
 const serverHandles=new Map([[ACCOUNT,'owner'],[OTHER_ACCOUNT,'other_owner']]);
 const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});
@@ -21,7 +25,12 @@ const originalFetch=globalThis.fetch;after(()=>{globalThis.fetch=originalFetch;}
 async function fakeFetch(url,init={}) {
   const call={url:String(url),method:init.method||'GET',body:init.body,init};requests.push(call);
   if(fetchHook){const response=await fetchHook(call);if(response!==undefined)return response;}
-  const parsed=new URL(call.url);assert.equal(init.credentials,'include');assert.equal(init.redirect,'error');
+  const parsed=new URL(call.url);
+  if(parsed.origin==='https://raw.githubusercontent.com'){
+    assert.equal(call.url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(call.method,'GET');assert.equal(init.credentials,'omit');assert.equal(init.redirect,'error');assert.equal(init.headers,undefined);
+    return json(OFFICIAL_SEED);
+  }
+  assert.equal(init.credentials,'include');assert.equal(init.redirect,'error');
   assert.equal(parsed.origin,'https://x.com');
   if(parsed.pathname===VIEWER_PATH){assert.equal(call.method,'GET');assert.deepEqual([...parsed.searchParams.keys()].sort(),['features','fieldToggles','variables']);assert.deepEqual(graphVariables(call),{withCommunitiesMemberships:false});assert.deepEqual(JSON.parse(parsed.searchParams.get('features')),VIEWER_FEATURES);assert.deepEqual(JSON.parse(parsed.searchParams.get('fieldToggles')),{withAuxiliaryUserLabels:true,isDelegate:false});return json(graphViewer(cookieAccount,serverHandles.get(cookieAccount)));}
   if(parsed.pathname===SCREEN_PATH){assert.equal(call.method,'GET');const handle=graphVariables(call).screen_name;return json(graphUser([...serverHandles].find(([,name])=>name===handle)?.[0],handle));}
@@ -35,7 +44,7 @@ storage.state.workerTabId=99;storage.state.runId='old-run';storage.state.paused=
 storage.state.queue=[{id:'interrupted',handle:'target',accountHandle:'owner',status:'running',updatedAt:new Date().toISOString()}];
 const extensionId='fixture';
 globalThis.chrome={
-  runtime:{id:extensionId,getURL:path=>`chrome-extension://${extensionId}/${path}`,onMessage:{addListener:fn=>listener=fn},onInstalled:{addListener(){}},onStartup:{addListener:fn=>startupListener=fn}},
+  runtime:{id:extensionId,getURL:path=>`chrome-extension://${extensionId}/${path}`,onMessage:{addListener:fn=>listener=fn},onInstalled:{addListener:fn=>installedListener=fn},onStartup:{addListener:fn=>startupListener=fn}},
   storage:{local:{get:async()=>structuredClone(storage),set:async value=>{storage=structuredClone(value);}},session:{get:async()=>structuredClone(session),set:async value=>{session={...session,...value};}}},
   alarms:{get:async name=>alarms.get(name),create:async(name,value)=>alarms.set(name,value),onAlarm:{addListener:fn=>alarmListener=fn}},
   permissions:{contains:async()=>true},
@@ -425,4 +434,77 @@ test('captured-list import enables and queues targets through the same guarded a
   const result=await send({type:'IMPORT_CAPTURE'});
   assert.equal(result.ok,true);assert.equal(result.imported,1);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.entries[0].source,'local');assert.equal(result.state.queue[0].status,'pending');assert.ok(alarms.has('gab-queue'));assert.equal(requests.length,0);
   await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);
+});
+
+test('fresh install exposes all 523 official IDs and only executes after verified connection and global opt-in',async()=>{
+  reset();storage={};session={};await reloadWorker();
+  let result=await send({type:'GET_STATE'});assert.equal(result.state.entries.length,523);assert.equal(result.state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);
+  assert.equal(result.state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(result.state.settings.autoBlock,false);assert.equal(result.state.paused,true);assert.equal(result.state.queue.length,0);
+  await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);assert.equal((await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}})).ok,false);assert.equal(requests.length,0);
+  result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true);await until(()=>storage.state.lastSync);
+  assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(storage.state.queue.length,0);assert.equal(posts().length,0);
+  assert.deepEqual(requests.filter(call=>new URL(call.url).origin==='https://x.com').map(call=>new URL(call.url).pathname),[VIEWER_PATH]);
+  result=await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}});assert.equal(result.ok,true);assert.equal(result.state.queue.length,523);assert.ok(result.state.queue.every(job=>job.status==='pending'&&job.accountId===ACCOUNT&&job.userId));assert.equal(posts().length,0);
+  await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);assert.equal(posts()[0].body,`user_id=${OFFICIAL_SEED.entries[0].id}`);
+});
+
+test('install startup and six-hour alarms refresh the official source without enabling execution',async()=>{
+  reset();storage={state:createInitialState()};
+  fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?json({schema:'guga-blocklist/v1',entries:[{handle:'curated_new',id:'777'}]}):undefined;
+  await installedListener();assert.equal(alarms.get('gab-sync').periodInMinutes,360);assert.deepEqual(storage.state.entries.map(row=>[row.handle,row.id,row.source]),[['curated_new','777',OFFICIAL_SUBSCRIPTION_ID]]);
+  assert.equal(storage.state.subscriptions[0].count,1);assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(storage.state.queue.length,0);
+  await startupListener();await alarmListener({name:'gab-sync'});
+  assert.equal(requests.length,3);assert.ok(requests.every(call=>call.url===OFFICIAL_SUBSCRIPTION_URL&&call.method==='GET'&&call.init.credentials==='omit'));assert.equal(posts().length,0);
+});
+
+test('connection is durable before a slow official refresh and cached IDs remain available offline',async()=>{
+  reset();storage={state:createInitialState()};let release;
+  fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?new Promise(resolve=>{release=resolve;}):undefined;
+  const result=await send({type:'BIND_ACCOUNT'});
+  try {
+    assert.equal(result.ok,true);assert.equal(result.state.lastConnection.status,'connected');assert.equal(result.state.entries.length,523);assert.equal(storage.state.settings.autoBlock,false);
+    await until(()=>release);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.entries.length,523);assert.equal(posts().length,0);
+  } finally {if(release)release(json({},503));}
+  await until(()=>storage.state.subscriptions[0].error);assert.match(storage.state.subscriptions[0].error,/503/);assert.equal(storage.state.entries.length,523);assert.equal(storage.state.lastConnection.status,'connected');
+});
+
+test('official refresh keeps the last good seed on invalid data and accepts an explicitly empty curator list',async()=>{
+  reset();storage={state:createInitialState()};const original=structuredClone(storage.state.entries);
+  for(const response of [new Response('bad-json',{status:200}),json({entries:[]}),json({schema:'guga-blocklist/v1',entries:[{handle:'conflict',id:'111'},{handle:'conflict',id:'222'}]})]){
+    fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?response:undefined;
+    assert.equal((await send({type:'SYNC'})).ok,true);assert.deepEqual(storage.state.entries,original);assert.ok(storage.state.subscriptions[0].error);
+  }
+  storage.state.entries.push(entry('private',TARGET));
+  fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?json({schema:'guga-blocklist/v1',entries:[]}):undefined;
+  assert.equal((await send({type:'SYNC'})).ok,true);assert.deepEqual(storage.state.entries,[entry('private',TARGET)]);assert.equal(storage.state.subscriptions[0].count,0);assert.equal(storage.state.subscriptions[0].error,'');
+  await reloadWorker();assert.deepEqual(storage.state.entries,[entry('private',TARGET)]);assert.equal(posts().length,0);
+});
+
+test('old state migrates once without changing its pause settings private rows history or unsubscribe choice',async()=>{
+  reset({bound:true,entries:[{...entry('private','123'),status:'pending'}]});delete storage.state.officialListVersion;
+  storage.state.settings.autoBlock=true;storage.state.paused=true;storage.state.pauseReason='Keep paused';storage.state.nativeBlocked={[`id:${ACCOUNT}`]:{'id:456':{handle:'old'}}};
+  storage.state.queue=[{id:'old',handle:'old',userId:'456',accountId:ACCOUNT,accountHandle:'owner',status:'done'}];const previous=structuredClone(storage.state);
+  await reloadWorker();assert.equal(storage.state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(storage.state.entries.length,524);
+  for(const key of ['settings','paused','pauseReason','nativeBlocked','queue'])assert.deepEqual(storage.state[key],previous[key]);assert.deepEqual(storage.state.entries[0],previous.entries[0]);
+  const removed=await send({type:'REMOVE_SUBSCRIPTION',id:OFFICIAL_SUBSCRIPTION_ID});assert.equal(removed.ok,true);assert.equal(removed.state.entries.length,1);
+  await reloadWorker();await startupListener();assert.equal(storage.state.subscriptions.length,0);assert.deepEqual(storage.state.entries,previous.entries);assert.equal(requests.length,0);
+});
+
+test('migration retains an existing disabled official subscription and its cache without duplicate URL sources',async()=>{
+  reset();delete storage.state.officialListVersion;
+  storage.state.subscriptions=[{id:'first',url:OFFICIAL_SUBSCRIPTION_URL,name:'Earlier duplicate',enabled:true},{id:'kept',url:OFFICIAL_SUBSCRIPTION_URL,name:'Do not enable',enabled:false,count:1}];
+  storage.state.entries=[{...entry('removed_alias','333'),source:'first'},{...entry('kept','444'),source:'kept'}];storage.state.allowlist=['removed_alias'];
+  await reloadWorker();assert.deepEqual(storage.state.subscriptions.map(sub=>[sub.id,sub.enabled]),[['kept',false]]);assert.deepEqual(storage.state.entries.map(row=>[row.handle,row.source]),[['kept','kept']]);assert.deepEqual(storage.state.allowlistPins.removed_alias,['333']);
+  await installedListener();await startupListener();await alarmListener({name:'gab-sync'});assert.equal(requests.length,0);assert.equal(storage.state.entries.length,1);
+});
+
+test('official source rows cannot be edited removed or uploaded through private-list operations',async()=>{
+  reset();storage={state:createInitialState()};const target=OFFICIAL_SEED.entries[0];const original=structuredClone(storage.state.entries);
+  assert.equal((await send({type:'EDIT_ENTRY',handle:target.handle,id:'999',reason:'Changed'})).ok,false);
+  assert.equal((await send({type:'REVIEW',handles:[target.handle],status:'pending'})).ok,true);
+  assert.equal((await send({type:'REMOVE_ENTRIES',handles:[target.handle]})).ok,true);
+  for(const type of ['UPLOAD','PUSH_GITHUB'])assert.equal((await send({type,entries:[target]})).ok,false);
+  assert.deepEqual(storage.state.entries,original);assert.equal(requests.length,0);
+  assert.equal((await send({type:'ALLOW',handle:target.handle,enabled:true})).ok,true);
+  assert.equal(effectiveEntries(storage.state).some(row=>row.id===target.id),false);assert.deepEqual(storage.state.entries,original);assert.equal(posts().length,0);
 });

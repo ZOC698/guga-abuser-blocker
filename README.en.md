@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.2.2 preview
+# Guga Abuser Blocker · 0.2.3 preview
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
@@ -10,7 +10,7 @@ A Chrome / Edge extension to reduce exposure to accounts on the Guga community�
 
 [Releases](https://github.com/ZOC698/guga-abuser-blocker/releases) · [Public list](lists/guga-blocklist.json) · [Maintainer workflow](CONTRIBUTING.md)
 
-The public list is currently empty and adds no blocking targets. Private local data is not published. Use this stable subscription URL:
+The built-in official subscription contains 523 accounts selected by the list owner from their imported blocking preferences. Inclusion is not an independently verified finding of abuse. Published entries contain only the current handle and exact numeric ID; no reason or evidence has been invented. The extension includes a packaged copy and refreshes it from this stable URL:
 
 ```text
 https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blocklist.json
@@ -20,7 +20,7 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 1. Extract the extension package and keep its folder. Open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, and load the **extension** folder containing `manifest.json` directly.
 2. Sign in to X in this browser profile. Click the extension toolbar icon to open all five management panels inside the popup.
-3. Under **Subscriptions**, add the public list URL above and grant access to `raw.githubusercontent.com`. Subscribers need no terminal, Codex, GitHub account, PAT or X developer API key.
+3. The official subscription is already enabled and includes a packaged starting list. Installation requests read access to `raw.githubusercontent.com` for updates; there is no list URL to paste. Subscribers need no terminal, Codex, GitHub account, PAT or X developer API key.
 4. Choose **Connect X session**. The background checks the signed-in browser session and binds its numeric account ID. **After upgrading from 0.1.x, reconnect before enabling blocking.** This is not developer OAuth authorization.
 5. Enable **Automatic X blocking**. Enabled entries with numeric IDs enter the background queue. Keep the browser running; a dedicated X profile tab is no longer needed. The default request interval is at least 30 seconds, adjustable up to 300 seconds.
 
@@ -40,7 +40,7 @@ Private JSON and CSV downloads contain local entries only, not all settings, sub
 
 ## Blocking and current limits
 
-Version 0.2.2 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
+Version 0.2.3 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
 
 Every native block requires an existing numeric target ID. A handle-only enabled entry waits as **Needs numeric ID**, without sending a block request. Add an ID to a local entry, or wait for the subscription maintainer to supply it. No automatic handle-to-ID lookup is performed by the queue. IDs and the connected numeric account identity are checked around execution; content hiding still matches handles.
 
@@ -52,7 +52,7 @@ A complete authenticated workflow on real X across browsers, languages and accou
 
 ## Public list maintenance
 
-Only authorized maintainers publish through the separate CLI workflow in [CONTRIBUTING.md](CONTRIBUTING.md). Public publication still requires the maintainer’s evidence review; enabling a local import does not approve it for publication. The subscriber extension has no public export, upload, repository creation or list-submission feature. This project does not use subscriber list PRs as a publication workflow. GitHub repository permissions control who can write the shared file.
+Only maintainers with GitHub write access can publish through the separate CLI workflow in [CONTRIBUTING.md](CONTRIBUTING.md). The owner has authorized publication of the initial 523 entries as blocking preferences; no additional approval status, reason or evidence is required. The subscriber extension has no public export, upload, repository creation or list-submission feature. It cannot modify the public branch. This project does not use subscriber list PRs as a publication workflow. Personal exceptions and local edits do not change the shared file.
 
 This is an independent implementation inspired by Twitter Bird Shield's shared-list approach. It does not bundle Bird Shield code, icons or lists, and does not claim full format compatibility or equivalent reliability.
 

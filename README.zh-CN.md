@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.2.2 预览版
+# Guga Abuser Blocker · 0.2.3 预览版
 
 [English](README.en.md) · [日本語](README.ja.md)
 
@@ -10,7 +10,7 @@
 
 [发行页面](https://github.com/ZOC698/guga-abuser-blocker/releases) · [公开名单](lists/guga-blocklist.json) · [维护者流程](CONTRIBUTING.md)
 
-公开名单目前为空，尚不增加任何拉黑目标。私人本地数据不会发布。订阅固定地址为：
+内置官方订阅包含名单所有者从已导出屏蔽偏好中选择的 523 个账号；入选不代表已独立核实存在虐待行为。公开条目只包含当前用户名和精确数字 ID，不补写或编造理由、证据。扩展附带初始名单副本，并从以下固定地址更新：
 
 ```text
 https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blocklist.json
@@ -20,7 +20,7 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 1. 解压扩展包并保留文件夹。打开 `chrome://extensions` 或 `edge://extensions`，开启开发者模式，加载直接包含 `manifest.json` 的 **extension** 文件夹。
 2. 在当前浏览器配置中登录 X。点击工具栏扩展图标，即可在弹窗内使用概览、名单、订阅、记录与设置。
-3. 在「名单订阅」添加上方公开名单地址，并授予 `raw.githubusercontent.com` 读取权限。订阅者无需终端、Codex、GitHub 账号、PAT 或 X 开发者 API 密钥。
+3. 官方订阅已默认启用，并附带初始名单。安装时需要 `raw.githubusercontent.com` 读取权限以获取更新，无需粘贴名单地址。订阅者无需终端、Codex、GitHub 账号、PAT 或 X 开发者 API 密钥。
 4. 点击「连接 X 会话」，后台核对当前登录会话并绑定数字账号 ID。**从 0.1.x 升级后，需要重新连接，再开启拉黑。** 这不是开发者 OAuth 授权。
 5. 开启「自动 X 拉黑」。已启用且有数字 ID 的条目进入后台队列；保持浏览器运行，无需专用的 X 用户主页标签页。请求间隔至少 30 秒，可调到 300 秒。
 
@@ -40,7 +40,7 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 ## 拉黑方式与当前边界
 
-0.2.2 使用浏览器已登录的会话，在后台请求 X 网页内部接口，并通过接口读回拉黑关系后才记录成功。队列不再点击用户主页菜单。网页内部接口与公开文档中的开发者 OAuth API 不同，也可能随 X 更新变化。
+0.2.3 使用浏览器已登录的会话，在后台请求 X 网页内部接口，并通过接口读回拉黑关系后才记录成功。队列不再点击用户主页菜单。网页内部接口与公开文档中的开发者 OAuth API 不同，也可能随 X 更新变化。
 
 每次原生拉黑都必须有现成的目标数字 ID。只有用户名的已启用条目显示「待补数字 ID」，不会发送拉黑请求。可编辑本地条目补齐，订阅条目则等待名单维护者更新。队列不会自动按用户名查询 ID 后拉黑。执行前后核对数字目标身份和所连接的数字账号身份；内容隐藏仍按用户名匹配。
 
@@ -52,7 +52,7 @@ https://raw.githubusercontent.com/ZOC698/guga-abuser-blocker/main/lists/guga-blo
 
 ## 公共名单维护
 
-只有有仓库写权限的维护者通过 [CONTRIBUTING.md](CONTRIBUTING.md) 所述独立 CLI 流程发布。公开发布仍需维护者审核证据，本地导入启用不代表获准公开发布。订阅扩展没有公共导出、上传、创建仓库或名单投稿入口，也不以订阅者提交名单 PR 作为发布流程。共享文件的写入由 GitHub 仓库权限控制。
+只有具有 GitHub 写权限的维护者能通过 [CONTRIBUTING.md](CONTRIBUTING.md) 所述独立 CLI 流程发布。名单所有者已授权将初始 523 条作为屏蔽偏好公开，无需另加批准状态、理由或证据。订阅扩展没有公共导出、上传、创建仓库或名单投稿入口，不能修改公开分支，也不以订阅者提交名单 PR 作为发布流程。个人例外和本地编辑不会改变共享文件。
 
 本项目参考推特鸟盾的共享名单思路，独立实现，不打包其源码、图标或名单，不声称完整格式兼容或同等可靠性。
 

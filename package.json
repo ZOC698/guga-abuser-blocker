@@ -1,6 +1,6 @@
 {
   "name": "guga-abuser-blocker",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "check": "node scripts/check.mjs",
     "validate:list": "node scripts/validate-list.mjs lists/guga-blocklist.json",
     "build:list": "node scripts/build-list.mjs",
+    "sync:official": "node scripts/sync-official-list.mjs",
     "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1"
   },
   "devDependencies": {"playwright": "1.60.0"},

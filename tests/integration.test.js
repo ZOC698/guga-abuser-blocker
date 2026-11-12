@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {OFFICIAL_SEED,OFFICIAL_SUBSCRIPTION_URL} from '../extension/lib/official-list.js';
 const require=createRequire(import.meta.url);let pw;
 try{pw=require(process.env.PLAYWRIGHT_MODULE||'playwright');}catch{}
 const project=path.resolve(import.meta.dirname,'..');
@@ -16,13 +17,18 @@ test('real unpacked MV3 extension: import enabled by default, locales, export, a
   const work=path.resolve(project,'../../work');await fs.mkdir(work,{recursive:true});const profile=await fs.mkdtemp(path.join(work,'test-browser-'));
   const extension=path.join(project,'extension');
   const version=JSON.parse(await fs.readFile(path.join(extension,'manifest.json'),'utf8')).version;
-  const context=await pw.chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,...(process.env.GAB_CHROMIUM_PATH?{executablePath:process.env.GAB_CHROMIUM_PATH}:{}),args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`,'--host-resolver-rules=MAP x.com ~NOTFOUND, MAP twitter.com ~NOTFOUND'],viewport:{width:1360,height:1000}});
+  const context=await pw.chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,...(process.env.GAB_CHROMIUM_PATH?{executablePath:process.env.GAB_CHROMIUM_PATH}:{}),args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`,'--host-resolver-rules=MAP x.com ~NOTFOUND, MAP twitter.com ~NOTFOUND, MAP raw.githubusercontent.com ~NOTFOUND'],viewport:{width:1360,height:1000}});
   t.after(()=>context.close());
   let remoteRequests=0, blockRequests=0, relationshipReads=0, pageNavigations=0;let blocking=false;const accountId='9876543210987654321',targetId='1234567890123456789',csrf='a'.repeat(64),apiCalls=[];
   const expires=Math.floor(Date.now()/1000)+3600;
   await context.addCookies([{name:'twid',value:`u%3D${accountId}`,domain:'.x.com',path:'/',secure:true,sameSite:'Lax',expires},{name:'ct0',value:csrf,domain:'.x.com',path:'/',secure:true,sameSite:'Lax',expires},{name:'auth_token',value:'synthetic-isolated-cookie',domain:'.x.com',path:'/',secure:true,httpOnly:true,sameSite:'Lax',expires}]);
   await context.route('https://**/*',async route=>{
     const request=route.request(),url=new URL(request.url());
+    if(url.href===OFFICIAL_SUBSCRIPTION_URL){
+      assert.equal(request.method(),'GET');const headers=await request.allHeaders();
+      assert.equal(headers.authorization,undefined);assert.equal(headers['x-csrf-token'],undefined);assert.equal(headers.cookie,undefined);
+      return route.fulfill({json:OFFICIAL_SEED});
+    }
     if(url.origin==='https://x.com'&&[VIEWER_PATH,REST_PATH,'/i/api/1.1/blocks/create.json'].includes(url.pathname)){
       const headers=await request.allHeaders();
       assert.equal(headers['x-csrf-token'],csrf);
@@ -55,7 +61,12 @@ test('real unpacked MV3 extension: import enabled by default, locales, export, a
     const id=new URL(worker.url()).host;await page.goto(`chrome-extension://${id}/options.html`);
     await page.waitForFunction(()=>document.querySelector('#language').value==='zh');
     const send=(type,payload={})=>page.evaluate(async({type,payload})=>chrome.runtime.sendMessage({type,...payload}),{type,payload});
-    assert.equal((await send('GET_STATE')).ok,true);
+    const fresh=(await send('GET_STATE')).state;
+    const official=fresh.subscriptions.find(sub=>sub.url===OFFICIAL_SUBSCRIPTION_URL);
+    assert.ok(official?.enabled);assert.equal(fresh.entries.length,523);assert.equal(fresh.settings.autoBlock,false);assert.equal(blockRequests,0);
+    // This fixture exercises private import/removal independently. The separate
+    // default-subscription fixture tests the two-action fresh-user workflow.
+    assert.equal((await send('REMOVE_SUBSCRIPTION',{id:official.id})).ok,true);
     await page.locator('[data-panel="library"]').click();await page.locator('#show-import').click();
     // Synthetic data only: tests never read a maintainer's private review file.
     await page.locator('#import-text').fill(Array.from({length:523},(_,i)=>`@imported_${i}`).join('\n'));
