@@ -74,45 +74,192 @@ export function parseImport(text, {source='local', status='pending', strictPubli
   const unique=new Map();
   for (let i=0;i<values.length;i++) {
     let e; try {e=normalizeEntry(values[i],{source,status});} catch(err){throw new Error(`Entry ${i+1}: ${err.message}`);}
-    if(!unique.has(e.handle)) unique.set(e.handle,e);
+    const existing=unique.get(e.handle);
+    if(existing?.id&&e.id&&existing.id!==e.id) throw new Error(`Conflicting numeric IDs for @${e.handle} in this import.`);
+    if(!existing) unique.set(e.handle,e);
+    else if(!existing.id&&e.id) unique.set(e.handle,{...existing,id:e.id});
   }
-  return {entries:[...unique.values()],duplicates:values.length-unique.size,...meta};
+  // A newer alias for one numeric identity is one account, not another target.
+  // Validate all handle conflicts above before collapsing these aliases.
+  const identities=new Map();
+  for(const entry of unique.values()) identities.set(identityKey(entry),entry);
+  return {entries:[...identities.values()],duplicates:values.length-identities.size,...meta};
 }
 
 export function initialState() {
-  return {version:1,settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{}};
+  return {version:1,settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],allowlistPins:{},queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{}};
+}
+
+export function retainAllowlistIdentities(state, nextEntries=state.entries) {
+  // Exceptions follow every known numeric identity even when an alias disappears
+  // from a refreshed list. Removing the exception discards its retained pins.
+  const pins={},allowed=new Set(state.allowlist),known=new Map([...allowed].map(handle=>[handle,new Set()]));
+  const valid=id=>typeof id==='string'&&/^\d{1,25}$/.test(id);
+  for(const handle of allowed) {
+    const previous=Object.hasOwn(state.allowlistPins||{},handle)?state.allowlistPins[handle]:[];
+    if(Array.isArray(previous))for(const id of previous)if(valid(id))known.get(handle).add(id);
+  }
+  for(const e of [...state.entries,...nextEntries])if(allowed.has(e.handle)&&valid(e.id))known.get(e.handle).add(e.id);
+  for(const [handle,ids] of known)if(ids.size)Object.defineProperty(pins,handle,{value:[...ids],enumerable:true,writable:true,configurable:true});
+  state.allowlistPins=pins;
+  return pins;
 }
 
 export function effectiveEntries(state) {
   const allow=new Set(state.allowlist); const active=new Set(state.subscriptions.filter(s=>s.enabled).map(s=>s.id));
-  const map=new Map();
-  for (const e of state.entries) if (e.status==='approved' && (e.source==='local'||active.has(e.source)) && !allow.has(e.handle) && e.handle!==state.settings.accountHandle) map.set(e.handle,e);
-  return [...map.values()];
+  const candidates=state.entries.filter(e=>e.status==='approved'&&(e.source==='local'||active.has(e.source)));
+  const excludedIds=new Set(state.entries.filter(e=>e.id&&(allow.has(e.handle)||e.handle===state.settings.accountHandle)).map(e=>e.id));
+  for(const handle of allow) {
+    const pins=Object.hasOwn(state.allowlistPins||{},handle)?state.allowlistPins[handle]:[];
+    if(Array.isArray(pins))for(const id of pins)if(typeof id==='string'&&/^\d{1,25}$/.test(id))excludedIds.add(id);
+  }
+  const handles=new Map();
+  for(const e of candidates) {
+    if(allow.has(e.handle)||e.handle===state.settings.accountHandle||(e.id&&excludedIds.has(e.id))) continue;
+    const previous=handles.get(e.handle);
+    if(previous?.id&&e.id&&previous.id!==e.id) throw new Error(`Conflicting numeric IDs for @${e.handle}. Review the active lists before blocking.`);
+    // A handle-only source must not erase another source's stronger identity pin.
+    handles.set(e.handle,{...previous,...e,...((previous?.id||e.id)?{id:previous?.id||e.id}:{})});
+  }
+  const identities=new Map();
+  for(const e of handles.values()) identities.set(identityKey(e),e);
+  return [...identities.values()];
 }
 
 export function mergeLocal(state, incoming) {
-  const map=new Map(state.entries.filter(e=>e.source==='local').map(e=>[e.handle,e])); let imported=0,duplicates=0;
-  for(const e of incoming) {if(map.has(e.handle)){duplicates++;continue;} map.set(e.handle,{...e,source:'local',status:'pending'});imported++;}
-  if(map.size+state.entries.filter(e=>e.source!=='local').length>MAX_ENTRIES) throw new Error('Local storage entry limit reached.');
-  state.entries=[...state.entries.filter(e=>e.source!=='local'),...map.values()];return {imported,duplicates};
+  const map=new Map(state.entries.filter(e=>e.source==='local').map(e=>[e.handle,{...e}]));
+  const idHandles=new Map();
+  const remember=e=>{if(e.id){if(!idHandles.has(e.id))idHandles.set(e.id,new Set());idHandles.get(e.id).add(e.handle);}};
+  const remove=handle=>{const old=map.get(handle);map.delete(handle);if(old?.id)idHandles.get(old.id)?.delete(handle);};
+  const put=e=>{remove(e.handle);map.set(e.handle,e);remember(e);};
+  for(const e of map.values())remember(e);
+  let imported=0,duplicates=0,updated=0;
+  const incomingIds=new Map();
+  for(const value of incoming) {
+    const e=normalizeEntry(value);
+    const previousId=incomingIds.get(e.handle);
+    if(previousId&&e.id&&previousId!==e.id)throw new Error(`Conflicting numeric IDs for @${e.handle} in this import.`);
+    if(e.id)incomingIds.set(e.handle,e.id);
+    const existing=map.get(e.handle);
+    if(existing) {
+      duplicates++;
+      if(existing.id&&e.id&&existing.id!==e.id)throw new Error(`The numeric ID for @${e.handle} differs from the local record. Edit its identity and review it before importing a replacement.`);
+      if(!existing.id&&e.id) {
+        // Enrichment narrows an existing approval; it never approves a pending row.
+        const next={...existing,id:e.id};
+        for(const alias of [...(idHandles.get(e.id)||[])])if(alias!==e.handle)remove(alias);
+        put(next);updated++;
+      }
+      continue;
+    }
+    const aliases=e.id?[...(idHandles.get(e.id)||[])]:[];
+    if(aliases.length) {
+      const known=map.get(aliases.at(-1));
+      for(const alias of aliases)remove(alias);
+      put({...known,handle:e.handle});duplicates++;updated++;
+    } else {put({...e,source:'local',status:'pending'});imported++;}
+  }
+  const other=state.entries.filter(e=>e.source!=='local');
+  if(map.size+other.length>MAX_ENTRIES) throw new Error('Local storage entry limit reached.');
+  const entries=[...other,...map.values()];
+  // Do not partially change approved identity data if active sources conflict.
+  const nextState={...state};retainAllowlistIdentities(nextState,entries);
+  effectiveEntries({...nextState,entries});
+  state.entries=entries;state.allowlistPins=nextState.allowlistPins;return {imported,duplicates,updated};
+}
+
+export function identityKey(entry) {
+  if(entry.id!=null) {
+    if(typeof entry.id!=='string'||!/^\d{1,25}$/.test(entry.id))throw new Error('User IDs must be decimal strings, never JSON numbers.');
+    return `id:${entry.id}`;
+  }
+  return `handle:${normalizeHandle(entry.handle)}`;
+}
+
+const jobIdentity=job=>identityKey({handle:job.handle,...(job.userId?{id:job.userId}:{})});
+const activeJob=job=>['pending','running','failed','uncertain'].includes(job.status);
+const ownBucket=(state,account)=>Object.hasOwn(state.nativeBlocked||{},account)?state.nativeBlocked[account]:{};
+
+function blockedIdentities(state,account) {
+  const ids=new Set(),handles=new Set();
+  for(const [key,value] of Object.entries(ownBucket(state,account)||{})) {
+    if(/^id:\d{1,25}$/.test(key))ids.add(key.slice(3));
+    else {
+      const handle=key.startsWith('handle:')?key.slice(7):key;
+      if(/^[a-z0-9_]{1,15}$/.test(handle))handles.add(handle);
+    }
+    if(value&&typeof value==='object'&&typeof value.handle==='string')handles.add(value.handle);
+  }
+  for(const job of state.queue)if(job.accountHandle===account&&job.status==='done') {
+    if(job.userId)ids.add(job.userId);
+    handles.add(job.handle);
+  }
+  return {ids,handles};
+}
+
+export function recordBlocked(state,job,responseId) {
+  const id=responseId??job.userId;
+  const target={handle:job.handle,...(id?{id}:{})};
+  const key=identityKey(target);
+  if(job.userId&&id!==job.userId)throw new Error('The confirmed numeric ID differs from the queued account.');
+  state.nativeBlocked??={};
+  if(!Object.hasOwn(state.nativeBlocked,job.accountHandle))Object.defineProperty(state.nativeBlocked,job.accountHandle,{value:{},enumerable:true,writable:true,configurable:true});
+  const value={at:now(),handle:normalizeHandle(job.handle),...(id?{userId:id}:{})};
+  Object.defineProperty(state.nativeBlocked[job.accountHandle],key,{value,enumerable:true,writable:true,configurable:true});
+  return key;
 }
 
 export function reconcileQueue(state) {
-  const effective=new Set(effectiveEntries(state).map(e=>e.handle));
-  for(const job of state.queue) if (['pending','failed','uncertain'].includes(job.status) && (!effective.has(job.handle)||job.accountHandle!==state.settings.accountHandle)) {job.status='skipped';job.error='No longer eligible';job.updatedAt=now();}
+  const entries=effectiveEntries(state),account=state.settings.accountHandle;
+  const byHandle=new Map(entries.map(e=>[e.handle,e]));
+  const byId=new Map(entries.filter(e=>e.id).map(e=>[e.id,e]));
+  const blocked=blockedIdentities(state,account);
+  const seen=new Set(state.queue.filter(j=>j.status==='running'&&j.accountHandle===account).map(jobIdentity));
+  const seenHandles=new Set(state.queue.filter(j=>j.status==='running'&&j.accountHandle===account).map(j=>j.handle));
+  const priority={uncertain:0,failed:1,pending:2};
+  const queued=state.queue.filter(j=>['pending','failed','uncertain'].includes(j.status)).sort((a,b)=>priority[a.status]-priority[b.status]);
+  const skip=(job,message)=>{job.status='skipped';job.error=message;job.updatedAt=now();};
+  for(const job of queued) {
+    if(job.accountHandle!==account){skip(job,'No longer eligible');continue;}
+    const entry=(job.userId&&byId.get(job.userId))||byHandle.get(job.handle);
+    if(!entry){skip(job,'No longer eligible');continue;}
+    // Only jobs that cannot be in flight may change identities. Preserve a known
+    // pin when a source temporarily supplies only a handle instead of its ID.
+    const id=entry.id||job.userId;
+    const key=identityKey({handle:entry.handle,...(id?{id}:{})});
+    if((id&&blocked.ids.has(id))||(!id&&blocked.handles.has(entry.handle))){skip(job,'Already confirmed blocked');continue;}
+    if(seen.has(key)||(!entry.id&&seenHandles.has(entry.handle))){skip(job,'Another job already covers this account');continue;}
+    if(job.handle!==entry.handle||job.userId!==id) {
+      job.handle=entry.handle;
+      if(id)job.userId=id;
+      job.updatedAt=now();
+    }
+    seen.add(key);seenHandles.add(entry.handle);
+  }
+}
+
+export function retryFailed(state) {
+  reconcileQueue(state);let retried=0;
+  for(const job of state.queue)if(['failed','uncertain'].includes(job.status)&&job.accountHandle===state.settings.accountHandle) {
+    job.status='pending';job.error='';job.updatedAt=now();retried++;
+  }
+  state.pauseReason='';return {retried};
 }
 
 export function enqueueApproved(state) {
   const account=state.settings.accountHandle; if(!account) throw new Error('Open X, sign in, then connect your account first.');
   reconcileQueue(state);
-  const present=new Set(state.queue.filter(j=>j.accountHandle===account && !['skipped'].includes(j.status)).map(j=>j.handle));
-  const done=Object.hasOwn(state.nativeBlocked,account)?state.nativeBlocked[account]:{};
-  const additions=effectiveEntries(state).filter(e=>!present.has(e.handle)&&!Object.hasOwn(done,e.handle));
-  const active=state.queue.filter(j=>['pending','running','failed','uncertain'].includes(j.status));
+  const present=state.queue.filter(j=>j.accountHandle===account&&activeJob(j));
+  const presentIds=new Set(present.filter(j=>j.userId).map(j=>j.userId));
+  const presentHandles=new Set(present.map(j=>j.handle));
+  const unpinnedRunning=new Set(present.filter(j=>j.status==='running'&&!j.userId).map(j=>j.handle));
+  const done=blockedIdentities(state,account);
+  const additions=effectiveEntries(state).filter(e=>e.id?!presentIds.has(e.id)&&!unpinnedRunning.has(e.handle)&&!done.ids.has(e.id):!presentHandles.has(e.handle)&&!done.handles.has(e.handle));
+  const active=state.queue.filter(activeJob);
   if(active.length+additions.length>MAX_ENTRIES)throw new Error('Queue is full; finish or remove pending entries first.');
-  const history=state.queue.filter(j=>!['pending','running','failed','uncertain'].includes(j.status));
-  state.queue=[...history.slice(-Math.max(0,MAX_ENTRIES-active.length-additions.length)),...active];
-  if(active.length+additions.length===MAX_ENTRIES)state.queue=[...active];
+  const history=state.queue.filter(j=>!activeJob(j));
+  const keep=Math.max(0,MAX_ENTRIES-active.length-additions.length);
+  state.queue=[...(keep?history.slice(-keep):[]),...active];
   for(const e of additions)state.queue.push({id:uid(),handle:e.handle,...(e.id?{userId:e.id}:{}),accountHandle:account,status:'pending',error:'',updatedAt:now()});
 }
 

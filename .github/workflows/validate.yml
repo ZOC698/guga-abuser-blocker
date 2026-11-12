@@ -15,7 +15,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -29,4 +29,10 @@ jobs:
       - name: Validate public subscription file
         run: node scripts/validate-list.mjs lists/guga-blocklist.json
       - name: Run dependency-free unit tests
-        run: node --test tests/core.test.js tests/background.test.js tests/list-pipeline.test.js
+        run: npm run test:unit
+      - name: Install pinned browser test dependency
+        run: npm ci --ignore-scripts
+      - name: Install isolated test browser
+        run: npx playwright install --with-deps chromium
+      - name: Run required browser fixtures
+        run: npm run test:browser

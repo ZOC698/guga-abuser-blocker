@@ -1,8 +1,8 @@
 # Guga list format · v1
 
-Chinese: 文件导入一律待审核；公开订阅直接信任维护者的条目。数字 ID 必须保存为字符串，并同时提供当前用户名。
+Chinese: 新导入条目一律待审核；公开订阅直接信任维护者的条目。数字 ID 必须保存为字符串，并同时提供当前用户名。
 
-日本語: ファイル取り込みはすべて確認待ちになります。公開リストの購読は管理者の項目を信頼する操作です。数値 ID は文字列で保存し、現在のユーザー名も指定してください。
+日本語: 新規の取り込み項目は確認待ちになります。公開リストの購読は管理者の項目を信頼する操作です。数値 ID は文字列で保存し、現在のユーザー名も指定してください。
 
 ## Public subscription JSON
 
@@ -37,7 +37,7 @@ An illustrative entry below uses placeholders and is **not a recommendation to b
 }
 ```
 
-The extension treats subscription entries as approved because the user explicitly trusts the source. Imported `source`, `status` and `addedAt` fields are not trusted. Exported public lists contain approved local entries only, excluding allowlisted handles; subscribed entries are not republished. Reasons and evidence are curator submissions, not plugin-verified findings.
+The extension treats subscription entries as approved because the user explicitly trusts the source. Imported `source`, `status` and `addedAt` fields are not trusted. The extension only reads public subscription files and does not export or upload public lists. The repository maintainer generates the public file with the separate CLI described in CONTRIBUTING.md. Reasons and evidence are curator submissions, not plugin-verified findings.
 
 Public URLs must have this form:
 
@@ -53,9 +53,9 @@ Supported inputs are newline-separated handles or X profile URLs, CSV, a JSON ar
 
 CSV should begin with `handle`, `username` or `screen_name`, followed by optional columns such as `id,reason,evidence,status`. Quote cells containing commas or newlines. `evidence` can contain a JSON string array; exported CSV quotes it automatically. CSV export prefixes potentially executable spreadsheet formulas with an apostrophe, which may be visible when re-importing text fields.
 
-Every local import becomes pending regardless of a supplied status. Duplicate handles within a file are collapsed, keeping the first occurrence. Existing local handles are kept rather than overwritten by a later import. Private JSON and CSV exports contain local entries only, not a complete state backup.
+New local entries become pending regardless of a supplied status. Duplicate inputs are reconciled by handle and numeric ID; conflicting IDs are rejected. Re-importing a known handle can fill a missing ID while retaining its local review status, reason and evidence. An imported matching numeric ID with a new handle can update that local mapping; it does not perform an online rename lookup. Import feedback reports imported, updated and duplicate counts; updated entries can also count as duplicates. Existing nonempty IDs cannot be silently replaced by import. Use the local entry editor to correct an ID; correcting an existing ID resets the entry to pending, while filling a missing ID preserves its review status. Known IDs cannot be cleared. Private JSON and CSV exports contain local entries only, not a complete state backup.
 
-Limits: 4 MiB per imported or downloaded file; 20,000 input entries per file and 20,000 combined stored entries across local lists and subscriptions; at most 20 subscriptions. Browser storage quotas can impose a lower practical limit for large reasons or URLs.
+Limits: 4 MiB per imported or downloaded file; 20,000 input entries per file and 20,000 combined stored entries across local lists and subscriptions; at most 20 subscriptions. Chrome storage.local has a 10 MiB quota in supported Chrome versions; combined queue, log and list storage can impose a lower practical limit than the entry count for large reasons or URLs.
 
 ## Identity and Bird Shield
 
@@ -63,4 +63,4 @@ The extension opens profiles by handle. Supplied IDs are pinned and checked befo
 
 The original [Bird Shield blacklist directory](https://github.com/free-spirit-dev/bird-shield-blocking/tree/main/bird-shield-blocking/share/blacklist) contains plain text numeric IDs, one per line; [fraud.txt](https://github.com/free-spirit-dev/bird-shield-blocking/blob/main/bird-shield-blocking/share/blacklist/fraud.txt) is a directly inspected example. Those ID-only files are rejected until current handles are supplied. This release does not implement Bird Shield's complete synchronization format or automatically import its lists.
 
-Never publish private source exports or backups. Generate and inspect Shareable JSON before uploading a curated public file.
+Private source exports and backups stay outside the repository. Only authorized maintainers build the public file with scripts/build-list.mjs, inspect the diff and publish it through their repository access. Subscriber uploads and list PRs are not part of the workflow.

@@ -1,33 +1,39 @@
 # Privacy · 隐私 · プライバシー
 
-Version 0.1.0 · 2026-11-12
+Version 0.1.1 preview · 2026-11-12
 
 ## English
 
-**Stored locally:** imported accounts, reasons, evidence URLs, review status, exceptions, subscription URLs, connected account handle, capture results, settings, queue and activity records are stored in this browser's extension storage. They are not synchronized through Chrome Sync. The extension has no telemetry, analytics, developer server or automatic upload feature.
+**Local data:** imported accounts and numeric IDs, reasons, evidence links, review status, exceptions, subscription URLs, connected account handle, capture results, settings, queue and activity are kept in this browser's extension storage. Chrome Sync is not used. The extension has no telemetry, analytics or developer server.
 
-**Network access:** X pages are read and adjusted to hide matching content, identify the signed-in account and perform the requested native block actions. These actions use the existing signed-in page; the extension does not read or export cookies, passwords or authentication tokens. The browser still sends its ordinary X session data to X when it operates that page. Adding a subscription grants optional access to `raw.githubusercontent.com`; the extension fetches only the public list URLs you add, without credentials. GitHub receives normal network request information such as your IP address. The extension does not request a PAT.
+**Read-only subscriptions:** the extension reads the public GitHub Raw JSON URLs you add, without credentials. It has no GitHub write or public-list upload feature, does not accept a PAT, and does not send local entries to maintainers. GitHub receives normal request information, such as your IP address. Repository owners control publishing separately.
 
-**Sharing:** export files are saved only when requested. Shareable JSON contains approved local entries and their reasons/evidence, excluding exceptions. It does not contain subscription entries, queue records or logs. Uploading that file to a public repository makes its contents public. Full local JSON/CSV exports can contain private entries: never include those files or original private exports in a release or public repository.
+**X access:** the current queue reads and operates the signed-in X page, then reloads the target profile to check the observed result. It does not request your X password or developer API key. This DOM execution path does not read or export X authentication cookies or tokens; the browser sends its ordinary session information to X. The separate internal-API adapter is under independent validation and is not the default executor. Connecting an X account selects the queue's account; it is not developer OAuth authorization.
 
-**Control and deletion:** pause native blocking or disable content hiding in settings; remove subscriptions to stop their future use. Removing entries does not undo completed X blocks. Uninstalling clears extension storage, while downloaded files and X blocks remain until you remove them yourself. The private JSON export backs up local entries only, not the complete extension state.
+**Private backups:** JSON and CSV downloads occur only when requested and contain local entries. There is no shareable-public export. Backups can contain private accounts and evidence; keep them outside public repositories and release packages. These exports do not back up all settings, subscriptions or logs.
+
+**Control and deletion:** pause blocking, disable content hiding or remove subscriptions. Removing an entry or subscription does not undo completed X blocks. Uninstalling clears extension storage; downloaded files and existing X blocks remain until you remove them yourself.
 
 ## 简体中文
 
-账号条目、理由、证据链接、审核状态、允许名单、订阅链接、连接的账号用户名、采集结果、设置、队列和日志保存在当前浏览器的扩展存储，不使用 Chrome Sync。没有统计分析、遥测、自建服务端或自动上传。
+账号和数字 ID、理由、证据链接、审核状态、白名单例外、订阅地址、绑定账号用户名、采集结果、设置、队列和操作记录保存在当前浏览器扩展存储，不使用 Chrome Sync。没有遥测、统计分析或开发者服务端。
 
-插件读取 X 页面以隐藏内容、识别当前账号并执行你启用的原生拉黑。不读取或导出 Cookie、密码、认证令牌；浏览器操作已登录页面时，仍正常向 X 发送自己的会话信息。添加订阅时申请 `raw.githubusercontent.com` 的可选权限，只获取你添加的公开名单链接，不携带认证信息。GitHub 会收到 IP 地址等普通请求信息，无需 PAT。
+订阅只有读取功能：以不带认证信息的请求读取你添加的公开 GitHub Raw JSON。扩展没有 GitHub 写入、公共名单上传功能，不接收 PAT，也不把本地条目发送给维护者。GitHub 会收到 IP 地址等普通请求信息；公共发布由仓库维护者独立控制。
 
-导出仅在你操作时发生。可分享 JSON 包含已批准本地条目及理由/证据，排除允许名单，不含订阅条目、队列或日志。上传到公开仓库后这些内容会公开。完整本地 JSON/CSV 和私人原始导出可能含有私人条目，不得放进发行包或公开仓库。
+当前队列读取并操作已登录的 X 页面，随后重新加载目标主页核对结果。无需提供 X 密码或开发者 API 密钥。该 DOM 执行路径不读取或导出 X 认证 Cookie 或令牌；浏览器仍正常向 X 发送会话信息。内部接口适配器单独验证中，尚非默认执行方式。「连接账号」用于选定队列账号，不是开发者 OAuth 授权。
 
-可暂停拉黑、关闭隐藏、删除订阅。删除条目不解除已有 X 拉黑；卸载清除扩展存储，但不会删除已下载文件或解除 X 拉黑。私人 JSON 仅备份本地条目，并非整个插件状态。
+私人 JSON / CSV 仅在用户主动导出时下载，包含本地条目，没有公共分享导出。私人备份可能包含账号及证据，不应放进公共仓库或发行包；它不是全部设置、订阅和日志的完整备份。
+
+可以暂停拉黑、关闭隐藏或删除订阅。移除条目或订阅不解除已有 X 拉黑。卸载会清除扩展存储，但不会删除下载文件或解除 X 拉黑。
 
 ## 日本語
 
-アカウント、理由、根拠 URL、確認状態、許可リスト、購読 URL、接続アカウントのユーザー名、収集結果、設定、キュー、履歴をこのブラウザーの拡張機能ストレージに保存します。Chrome Sync は使用しません。アクセス解析、テレメトリー、独自サーバー、自動アップロードはありません。
+アカウントと数値 ID、理由、根拠リンク、確認状態、例外、購読 URL、接続アカウントのユーザー名、収集結果、設定、待機列、履歴をこのブラウザーの拡張機能ストレージに保存します。Chrome Sync、テレメトリー、アクセス解析、開発者サーバーは使用しません。
 
-X の画面を読み取り、投稿の非表示、ログイン中のアカウントの確認、有効にしたブロック操作を行います。Cookie・パスワード・認証トークンを読み出したり書き出したりしません。ブラウザーはログイン済み画面の通常動作として X にセッション情報を送ります。購読の追加時に `raw.githubusercontent.com` の任意権限を求め、追加した公開リスト URL だけを認証情報なしで取得します。GitHub には IP アドレスなど通常のリクエスト情報が届きます。PAT は不要です。
+購読は読み取り専用です。追加した公開 GitHub Raw JSON を認証情報なしで取得します。GitHub 書き込みや公開リストのアップロード機能はなく、PAT を受け付けず、ローカル項目を管理者に送りません。GitHub には IP アドレスなど通常の通信情報が届きます。公開はリポジトリ管理者が別途管理します。
 
-書き出しはユーザー操作時のみ行います。共有用 JSON には許可リストを除く承認済みローカル項目と理由・根拠が含まれ、購読項目・キュー・履歴は含まれません。公開リポジトリにアップロードした内容は公開されます。個人の元データや完全なローカル JSON/CSV を配布パッケージや公開リポジトリに含めないでください。
+現在の待機列はログイン済みの X 画面を読み取り操作し、プロフィールを再読み込みして結果を確認します。X のパスワードや開発者 API キーの提供は不要です。この DOM 経路は X 認証 Cookie やトークンを読み出したり書き出したりしませんが、ブラウザーは通常のセッション情報を X に送ります。内部 API アダプターは別途検証中で、標準実行方式ではありません。アカウント接続は待機列の対象選択であり、開発者 OAuth 認可ではありません。
 
-ブロックの一時停止、非表示の無効化、購読の削除が可能です。項目を削除しても X ブロックは解除されません。アンインストールで拡張機能内のデータは消えますが、ダウンロード済みファイルや X ブロックは残ります。非公開 JSON はローカル項目のみのバックアップです。
+非公開 JSON / CSV は操作時だけダウンロードされ、ローカル項目を含みます。公開用書き出しはありません。個人のアカウントや根拠を含む可能性があるため、公開リポジトリや配布物には含めないでください。設定・購読・履歴の完全なバックアップではありません。
+
+ブロックの一時停止、非表示の無効化、購読の削除ができます。項目・購読を削除しても X ブロックは解除されません。アンインストールで拡張データは消えますが、ダウンロード済みファイルと X ブロックは残ります。

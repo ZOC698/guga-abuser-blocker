@@ -1,6 +1,6 @@
 # Maintaining the Guga list
 
-The extension and the public subscription list live in this repository. Personal exports and the review worklist stay outside it. Numeric X IDs are optional for this first version; use current handles and add IDs later as quoted decimal strings.
+The extension and the public subscription list live in this repository. This document is for authorized maintainers. Subscriber builds only read public lists: no public export, upload, PAT or candidate-submission feature is provided. Subscriber list PRs are not the publication workflow. Repository write permissions, not client-side controls, determine who can publish. Personal exports and the review worklist stay outside it. Numeric X IDs are optional for this first version; use current handles and add IDs later as quoted decimal strings.
 
 ## Review decisions
 

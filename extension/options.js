@@ -202,6 +202,7 @@ function previewImport() {
   return parsed;
 }
 async function exportList(kind) {
+  if (!['private', 'csv'].includes(kind)) throw new Error(t('privateExportOnly'));
   const result = await request('EXPORT', { kind });
   const blob = new Blob([result.text], { type: result.mime || 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -213,14 +214,14 @@ async function bindAccount() { const result = await request('BIND_ACCOUNT'); toa
 async function updateSelection(status) { if (!selected.size) throw new Error(t('selectedRequired')); await request('REVIEW', { handles: [...selected], status }); selected.clear(); renderLibrary(); toast(t(status === 'approved' ? 'approvedSuccess' : 'updatedSuccess')); }
 function editEntry(handle) {
   const entry = localEntries().find((value) => value.handle === handle); if (!entry) return;
-  editingHandle = handle; $('edit-account').textContent = `@${handle}`; $('edit-reason').value = entry.reason || ''; $('edit-evidence').value = (entry.evidence || []).join('\n'); $('entry-dialog').showModal(); $('edit-reason').focus();
+  editingHandle = handle; $('edit-account').textContent = `@${handle}`; $('edit-id').value = entry.id || ''; $('edit-reason').value = entry.reason || ''; $('edit-evidence').value = (entry.evidence || []).join('\n'); $('entry-dialog').showModal(); $('edit-reason').focus();
 }
 
 document.querySelectorAll('[data-panel]').forEach((node) => node.addEventListener('click', () => switchPanel(node.dataset.panel)));
 document.querySelectorAll('[data-go]').forEach((node) => node.addEventListener('click', () => { if (node.dataset.go === 'library' && node.classList.contains('primary')) showImport(); else switchPanel(node.dataset.go); }));
 onClick('show-import', showImport); onClick('close-import', () => { $('import-card').hidden = true; });
 onClick('preview-import', previewImport);
-onClick('confirm-import', async () => { const text = $('import-text').value.trim(); if (!text) throw new Error(t('importEmpty')); previewImport(); const result = await request('IMPORT', { text, format: 'auto', approve: false }); toast(t('importSuccess', { count: result.imported ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); $('import-text').value = ''; $('import-file').value = ''; $('file-name').textContent = ''; $('import-preview').hidden = true; $('import-card').hidden = true; $('status-filter').value = 'pending'; page = 0; renderLibrary(); });
+onClick('confirm-import', async () => { const text = $('import-text').value.trim(); if (!text) throw new Error(t('importEmpty')); previewImport(); const result = await request('IMPORT', { text, format: 'auto', approve: false }); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); $('import-text').value = ''; $('import-file').value = ''; $('file-name').textContent = ''; $('import-preview').hidden = true; $('import-card').hidden = true; $('status-filter').value = result.updated ? 'all' : 'pending'; page = 0; renderLibrary(); });
 $('import-file').addEventListener('change', () => action(async () => { const file = $('import-file').files?.[0]; if (!file) return; if (file.size > 4 * 1024 * 1024) throw new Error(t('fileTooLarge')); $('import-text').value = await file.text(); $('file-name').textContent = file.name; previewImport(); }));
 $('import-text').addEventListener('input', () => { $('import-preview').hidden = true; });
 $('search').addEventListener('input', () => { page = 0; renderLibrary(); });
@@ -231,10 +232,10 @@ $('accounts-body').addEventListener('change', (event) => { const checkbox = even
 $('accounts-body').addEventListener('click', (event) => { const button = event.target.closest('[data-allow-handle]'); if (button) action(async () => { await request('ALLOW', { handle: button.dataset.allowHandle, enabled: button.dataset.allowEnabled === 'true' }); toast(t(button.dataset.allowEnabled === 'true' ? 'saved' : 'exceptionRemoved')); }, button); const edit = event.target.closest('[data-edit-handle]'); if (edit) editEntry(edit.dataset.editHandle); });
 onClick('approve-selected', () => updateSelection('approved')); onClick('pending-selected', () => updateSelection('pending')); onClick('clear-selection', () => { selected.clear(); renderLibrary(); });
 onClick('remove-selected', async () => { if (!selected.size) throw new Error(t('selectedRequired')); await request('REMOVE_ENTRIES', { handles: [...selected] }); selected.clear(); renderLibrary(); toast(t('removed')); });
-onClick('export-list', () => exportList($('export-kind').value)); onClick('export-public', () => exportList('public'));
+onClick('export-list', () => exportList($('export-kind').value));
 onClick('capture-start', async () => { await request('CAPTURE', { autoScroll: $('auto-scroll').checked }); toast(t('captureStarted')); });
 onClick('capture-stop', async () => { await request('STOP_CAPTURE'); toast(t('captureStopped')); });
-onClick('capture-import', async () => { const result = await request('IMPORT_CAPTURE'); toast(t('importSuccess', { count: result.imported ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); });
+onClick('capture-import', async () => { const result = await request('IMPORT_CAPTURE'); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); });
 $('subscription-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => {
   const url = $('sub-url').value.trim(); let parsed; try { parsed = new URL(url); } catch { throw new Error(t('badRawUrl')); }
   if (parsed.protocol !== 'https:' || parsed.hostname !== 'raw.githubusercontent.com' || parsed.username || parsed.password || parsed.port) throw new Error(t('badRawUrl'));
@@ -256,7 +257,7 @@ onClick('save-interval', async () => { const value = Number($('interval').value)
 $('allow-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { await request('ALLOW', { handle: $('allow-handle').value, enabled: true }); $('allow-handle').value = ''; toast(t('saved')); }, event.submitter); });
 $('allow-chips').addEventListener('click', (event) => { const button = event.target.closest('[data-remove-allow]'); if (button) action(async () => { await request('ALLOW', { handle: button.dataset.removeAllow, enabled: false }); toast(t('exceptionRemoved')); }, button); });
 onClick('close-editor', () => $('entry-dialog').close()); onClick('cancel-editor', () => $('entry-dialog').close());
-$('entry-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { await request('EDIT_ENTRY', { handle: editingHandle, reason: $('edit-reason').value, evidence: $('edit-evidence').value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }); $('entry-dialog').close(); toast(t('saved')); }, event.submitter); });
+$('entry-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { const id = $('edit-id').value.trim(); if (id && !/^\d{1,25}$/.test(id)) throw new Error(t('numericIdInvalid')); if (!id && localEntries().find((entry) => entry.handle === editingHandle)?.id) throw new Error(t('numericIdRequired')); await request('EDIT_ENTRY', { handle: editingHandle, id, reason: $('edit-reason').value, evidence: $('edit-evidence').value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }); $('entry-dialog').close(); toast(t('saved')); }, event.submitter); });
 if (globalThis.chrome?.storage?.onChanged) chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.state?.newValue) { state = changes.state.newValue; render(); } });
 window.addEventListener('hashchange', () => switchPanel(location.hash.slice(1)));
 switchPanel(location.hash.slice(1));

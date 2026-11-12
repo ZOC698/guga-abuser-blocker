@@ -1,6 +1,6 @@
 # Public subscription list
 
-`guga-blocklist.json` is the stable subscription file. It starts empty: private imports remain pending until reviewed. An empty list is valid and adds no blocking targets. This repository does not contain the private source list.
+`guga-blocklist.json` is the stable subscription file. It is published only by authorized maintainers; the extension is a read-only subscriber, accepts no PAT and cannot upload local data. Subscriber list PRs are not the publication workflow. It starts empty: private imports remain pending until reviewed. An empty list is valid and adds no blocking targets. This repository does not contain the private source list.
 
 中文：数字 ID 可随后补齐；先使用当前用户名。只有人工审核为 `approved`、填写明确原因并附至少一条 HTTPS 证据链接的账号，才可发布。`pending` 和 `excluded` 不会进入订阅文件。用户名可能改名或被重新使用，维护者需要更新映射。
 
