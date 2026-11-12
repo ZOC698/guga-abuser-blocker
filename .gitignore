@@ -1,0 +1,15 @@
+node_modules/
+test-results/
+.test-profile/
+*.zip
+*.log
+private-review/
+*private-pending*
+*private-backup*
+*blocked_handles*
+*review-worklist*
+*.private.*
+private/
+work/
+CONTRACT.md
+.DS_Store
