@@ -12,7 +12,7 @@ const VIEWER_FEATURES={subscriptions_upsells_api_enabled:false,profile_label_imp
 const graphUser=(id,handle,blocking=false)=>({data:{user:{result:{__typename:'User',rest_id:id,core:{screen_name:handle},relationship_perspectives:{blocking}}}}});
 const graphViewer=(id,handle)=>({data:{viewer:{user_results:{result:graphUser(id,handle).data.user.result}}}});
 
-test('real unpacked MV3 extension: import, review, locales, export, account-bound queue and popup', {skip:!pw&&'Set PLAYWRIGHT_MODULE or install playwright.'},async(t)=>{
+test('real unpacked MV3 extension: import enabled by default, locales, export, automatic account-bound queue and popup', {skip:!pw&&'Set PLAYWRIGHT_MODULE or install playwright.'},async(t)=>{
   const work=path.resolve(project,'../../work');await fs.mkdir(work,{recursive:true});const profile=await fs.mkdtemp(path.join(work,'test-browser-'));
   const extension=path.join(project,'extension');
   const version=JSON.parse(await fs.readFile(path.join(extension,'manifest.json'),'utf8')).version;
@@ -58,34 +58,40 @@ test('real unpacked MV3 extension: import, review, locales, export, account-boun
     assert.equal((await send('GET_STATE')).ok,true);
     await page.locator('[data-panel="library"]').click();await page.locator('#show-import').click();
     // Synthetic data only: tests never read a maintainer's private review file.
-    await page.locator('#import-text').fill(Array.from({length:523},(_,i)=>`@pending_${i}`).join('\n'));
+    await page.locator('#import-text').fill(Array.from({length:523},(_,i)=>`@imported_${i}`).join('\n'));
     await page.locator('#confirm-import').click();await page.waitForFunction(()=>document.querySelector('#import-card').hidden,null,{timeout:10000});
-    let state=(await send('GET_STATE')).state;assert.equal(state.entries.length,523);assert.ok(state.entries.every(e=>e.status==='pending'));
+    let state=(await send('GET_STATE')).state;assert.equal(state.entries.length,523);assert.ok(state.entries.every(e=>e.status==='approved'));assert.equal(state.queue.length,0,'Unbound imports are enabled locally without an execution account');
     assert.equal((await send('EXPORT',{kind:'public'})).ok,false);assert.equal(await page.locator('#export-public').count(),0);
     for(const language of ['en','ja','zh']){await page.locator('#language').selectOption(language);await page.waitForFunction(lang=>document.documentElement.lang===(lang==='zh'?'zh-CN':lang),language);assert.equal((await send('GET_STATE')).state.settings.language,language);}
     await page.locator('[data-panel="overview"]').click();await page.screenshot({path:path.join(outputs,'guga-blocker-preview.png'),fullPage:true});
     await page.locator('[data-panel="library"]').click();await page.locator('#show-import').click();await page.locator('#import-text').fill('@fixture_target');await page.locator('#confirm-import').click();
-    await page.locator('#search').fill('fixture_target');await page.locator('[data-select-handle="fixture_target"]').check();await page.locator('#approve-selected').click();
+    await page.locator('#search').fill('fixture_target');
     await page.locator('#status-filter').selectOption('all');
     await page.locator('[data-edit-handle="fixture_target"]').click();await page.locator('#edit-reason').fill('Fixture reason');await page.locator('#edit-evidence').fill('https://x.com/fixture_target/status/1');await page.locator('#entry-form button[type="submit"]').click();
     state=(await send('GET_STATE')).state;assert.equal(state.entries.find(e=>e.handle==='fixture_target').reason,'Fixture reason');
     await page.locator('[data-edit-handle="fixture_target"]').click();await page.locator('#edit-id').fill('1234567890123456789');await page.locator('#entry-form button[type="submit"]').click();
     state=(await send('GET_STATE')).state;assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');
+    await page.locator('[data-select-handle="fixture_target"]').check();await page.locator('#pending-selected').click();
+    assert.equal((await send('GET_STATE')).state.entries.find(e=>e.handle==='fixture_target').status,'pending','A user can disable an imported local row');
     const downloadEvent=page.waitForEvent('download');await page.locator('#export-kind').selectOption('private');await page.locator('#export-list').click();const download=await downloadEvent;assert.equal(download.suggestedFilename(),'guga-private-backup.json');
     await page.bringToFront();await page.locator('[data-panel="settings"]').click();await page.locator('#bind-account').click();
     await page.waitForFunction(()=>document.querySelector('#bound-account').textContent.includes('fixture_owner'));
     assert.equal((await send('GET_STATE')).state.settings.accountId,accountId);
     const beforeQueuePages=context.pages().length;
-    await page.locator('#auto-block').check();await page.locator('[data-panel="overview"]').click();await page.locator('#queue-start').click();
-    for(let i=0;i<100;i++){state=(await send('GET_STATE')).state;const job=state.queue.find(j=>j.handle==='fixture_target');if(['done','failed','uncertain'].includes(job?.status))break;await new Promise(resolve=>setTimeout(resolve,250));}
-    assert.equal(state.queue.find(j=>j.handle==='fixture_target')?.status,'done',JSON.stringify(state.queue));assert.ok(state.nativeBlocked['id:'+accountId]['id:1234567890123456789']);assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');assert.equal(state.queue.length,1);assert.equal(blockRequests,1);assert.equal(relationshipReads,2,'Preflight and independent API readback are required');assert.equal(context.pages().length,beforeQueuePages,'API execution must not create a worker tab');assert.equal(pageNavigations,0);
+    await page.locator('#auto-block').check();
+    state=(await send('GET_STATE')).state;assert.equal(state.queue.length,523);assert.ok(state.queue.every(job=>job.status==='needs_id'));assert.equal(blockRequests,0);
+    await page.locator('[data-panel="library"]').click();await page.locator('#show-import').click();
+    await page.locator('#import-text').fill(JSON.stringify({entries:[{handle:'fixture_target',id:targetId,status:'pending'}]}));
+    await page.locator('#confirm-import').click();await page.waitForFunction(()=>document.querySelector('#import-card').hidden);
+    for(let i=0;i<200;i++){state=(await send('GET_STATE')).state;const job=state.queue.find(j=>j.handle==='fixture_target');if(['done','failed','uncertain'].includes(job?.status))break;await new Promise(resolve=>setTimeout(resolve,250));}
+    assert.equal(state.queue.find(j=>j.handle==='fixture_target')?.status,'done',JSON.stringify(state.queue));assert.ok(state.nativeBlocked['id:'+accountId]['id:1234567890123456789']);assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');assert.equal(state.entries.find(e=>e.handle==='fixture_target').status,'approved');assert.equal(state.queue.length,524);assert.equal(blockRequests,1);assert.equal(relationshipReads,2,'Preflight and independent API readback are required');assert.equal(context.pages().length,beforeQueuePages,'API execution must not create a worker tab');assert.equal(pageNavigations,0);
     assert.deepEqual(apiCalls,[
       {method:'GET',origin:'https://x.com',path:VIEWER_PATH},
       {method:'GET',origin:'https://x.com',path:REST_PATH},
       {method:'POST',origin:'https://x.com',path:'/i/api/1.1/blocks/create.json'},
       {method:'GET',origin:'https://x.com',path:REST_PATH}
     ],'Binding and execution must use the current GraphQL reads around one numeric POST');
-    await page.locator('#queue-pause').click();await page.reload();assert.equal((await send('GET_STATE')).state.paused,true);
+    await page.locator('[data-panel="overview"]').click();await page.locator('#queue-pause').click();await page.reload();assert.equal((await send('GET_STATE')).state.paused,true);
     await page.setViewportSize({width:800,height:900});await page.locator('[data-panel="settings"]').click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     const pageCount=context.pages().length;
     await page.setViewportSize({width:450,height:580});
@@ -108,7 +114,7 @@ test('real unpacked MV3 extension: import, review, locales, export, account-boun
     await page.reload();await page.waitForFunction(()=>document.querySelector('#import-text')?.value==='@popup_draft');
     assert.equal(await page.locator('#panel-library').isVisible(),true);
     await page.locator('#confirm-import').click();await page.waitForFunction(()=>document.querySelector('#import-card').hidden);
-    state=(await send('GET_STATE')).state;assert.equal(state.entries.find(e=>e.handle==='popup_draft')?.status,'pending');
+    state=(await send('GET_STATE')).state;assert.equal(state.entries.find(e=>e.handle==='popup_draft')?.status,'approved');assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);assert.equal(state.queue.find(job=>job.handle==='popup_draft').status,'needs_id');assert.equal(blockRequests,1,'Import does not enable the master switch or resume paused execution');
     const popupDownload=page.waitForEvent('download');await page.locator('#export-list').click();assert.equal((await popupDownload).suggestedFilename(),'guga-private-backup.json');
     await page.locator('[data-panel="subscriptions"]').click();await page.locator('#sub-name').fill('Draft subscription');await page.locator('#sub-url').fill('https://raw.githubusercontent.com/fixture/repo/main/list.json');
     await page.waitForFunction(async()=>JSON.stringify(await chrome.storage.session.get(null)).includes('Draft subscription'));

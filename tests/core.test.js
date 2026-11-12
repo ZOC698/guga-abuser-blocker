@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {initialState,normalizeHandle,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
+import {initialState,normalizeHandle,normalizeEntry,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
 
 const entry=(handle,extra={})=>({handle,source:'local',status:'approved',reason:'',evidence:[],...extra});
 
@@ -39,7 +39,7 @@ test('legacy handle history cannot suppress a verified API account and own numer
 });
 test('TXT handles are normalized and deduplicated, numeric IDs are not handles',()=>{
   const result=parseImport('\uFEFF@Example_A\r\n@example_a\nhttps://x.com/Example_B\n');
-  assert.deepEqual(result.entries.map(e=>e.handle),['example_a','example_b']);assert.equal(result.duplicates,1);assert.equal(result.entries[0].status,'pending');
+  assert.deepEqual(result.entries.map(e=>e.handle),['example_a','example_b']);assert.equal(result.duplicates,1);assert.equal(result.entries[0].status,'approved');
   assert.throws(()=>parseImport('1234567890123456789'),/numeric IDs/);
   assert.equal(parseImport('@123456').entries[0].handle,'123456');
   assert.throws(()=>normalizeHandle('https://x.com/example/status/123'),/profile URL/);
@@ -47,7 +47,7 @@ test('TXT handles are normalized and deduplicated, numeric IDs are not handles',
 });
 test('JSON preserves exact numeric strings and rejects precision-loss numbers',()=>{
   const parsed=parseImport(JSON.stringify({entries:[{handle:'example',id:'1234567890123456789',status:'approved',reason:'test',evidence:['https://x.com/example/status/1','javascript:alert(1)']}]}));
-  assert.equal(parsed.entries[0].id,'1234567890123456789');assert.equal(parsed.entries[0].status,'pending');assert.equal(parsed.entries[0].evidence.length,1);
+  assert.equal(parsed.entries[0].id,'1234567890123456789');assert.equal(parsed.entries[0].status,'approved');assert.equal(parsed.entries[0].evidence.length,1);
   assert.throws(()=>parseImport('{"entries":[{"handle":"example","id":1234567890123456789}]}'),/decimal strings/);
   assert.throws(()=>parseImport('{"entries":[{"userId":"1234"}]}'),/ID-to-handle/);
 });
@@ -62,10 +62,10 @@ test('public export contains only approved local rows and excludes exceptions',(
   assert.deepEqual(publicDocument(s).entries.map(e=>e.handle),['public']);
   assert.equal(publicDocument(s).schema,'guga-blocklist/v1');
 });
-test('failed import is atomic and duplicate import does not erase approvals',()=>{
+test('failed import is atomic and imported rows are enabled immediately',()=>{
   const s=initialState();s.entries=[entry('existing')];
   assert.throws(()=>mergeLocal(s,parseImport('@new\nwrong handle').entries));assert.equal(s.entries.length,1);
-  const result=mergeLocal(s,parseImport('@existing\n@new').entries);assert.equal(result.duplicates,1);assert.equal(result.imported,1);assert.equal(s.entries.find(e=>e.handle==='existing').status,'approved');assert.equal(s.entries.find(e=>e.handle==='new').status,'pending');
+  const result=mergeLocal(s,parseImport('@existing\n@new').entries);assert.equal(result.duplicates,1);assert.equal(result.imported,1);assert.equal(s.entries.find(e=>e.handle==='existing').status,'approved');assert.equal(s.entries.find(e=>e.handle==='new').status,'approved');
 });
 test('queue respects self, exceptions, subscriptions, prior account outcomes and own object keys',()=>{
   const s=initialState();s.settings.accountHandle='__proto__';s.subscriptions=[{id:'s1',enabled:true}];
@@ -93,23 +93,23 @@ test('duplicate imports enrich one ID, reject conflicting IDs, and collapse veri
   assert.throws(()=>parseImport(JSON.stringify({entries:[{handle:'old_name',id:'123'},{handle:'new_name',id:'123'},{handle:'old_name',id:'456'}]})),/Conflicting numeric IDs/);
 });
 
-test('local ID enrichment preserves reviews and metadata; conflicting replacement is atomic',()=>{
+test('local ID enrichment enables matching rows and preserves metadata; conflicting replacement is atomic',()=>{
   const s=initialState();s.entries=[entry('reviewed',{reason:'Reviewed reason',evidence:['https://example.com/evidence']}),entry('pending',{status:'pending'})];
   const result=mergeLocal(s,parseImport(JSON.stringify({entries:[{handle:'reviewed',id:'123',reason:'Unreviewed replacement',status:'approved'},{handle:'pending',id:'456',status:'approved'}]})).entries);
   assert.deepEqual(result,{imported:0,duplicates:2,updated:2});
-  assert.deepEqual(s.entries.map(e=>[e.handle,e.id,e.status]),[['reviewed','123','approved'],['pending','456','pending']]);
+  assert.deepEqual(s.entries.map(e=>[e.handle,e.id,e.status]),[['reviewed','123','approved'],['pending','456','approved']]);
   assert.equal(s.entries[0].reason,'Reviewed reason');assert.deepEqual(s.entries[0].evidence,['https://example.com/evidence']);
   const before=structuredClone(s);
-  assert.throws(()=>mergeLocal(s,parseImport(JSON.stringify({entries:[{handle:'another',id:'789'},{handle:'reviewed',id:'999'}]})).entries),/Edit its identity and review/);
+  assert.throws(()=>mergeLocal(s,parseImport(JSON.stringify({entries:[{handle:'another',id:'789'},{handle:'reviewed',id:'999'}]})).entries),/Correct its local identity/);
   assert.deepEqual(s,before);
 });
 
-test('a renamed numeric identity updates a local alias without creating or granting approval',()=>{
+test('explicitly importing a renamed numeric identity enables its local alias without duplicating it',()=>{
   for(const status of ['approved','pending']) {
     const s=initialState();s.entries=[entry('old_name',{id:'123',status,reason:'Keep this'})];
     const result=mergeLocal(s,parseImport(JSON.stringify({entries:[{handle:'new_name',id:'123'}]})).entries);
     assert.deepEqual(result,{imported:0,duplicates:1,updated:1});
-    assert.equal(s.entries.length,1);assert.equal(s.entries[0].handle,'new_name');assert.equal(s.entries[0].status,status);assert.equal(s.entries[0].reason,'Keep this');
+    assert.equal(s.entries.length,1);assert.equal(s.entries[0].handle,'new_name');assert.equal(s.entries[0].status,'approved');assert.equal(s.entries[0].reason,'Keep this');
   }
 });
 
@@ -212,4 +212,23 @@ test('failed local identity merge leaves exception pins and entries atomic',()=>
   const full=initialState();full.allowlist=['old_name'];full.entries=[entry('old_name',{id:'123'}),...Array.from({length:MAX_ENTRIES-1},(_,i)=>entry(`other${i}`,{source:'disabled'}))];const oldEntries=full.entries;
   assert.throws(()=>mergeLocal(full,[{handle:'new_name',id:'123'},{handle:'additional',id:'456'}]),/entry limit/);
   assert.equal(full.entries,oldEntries);assert.deepEqual(full.allowlistPins,{});assert.equal(full.entries[0].handle,'old_name');
+});
+
+test('explicit import enables disabled local rows without changing metadata or unrelated rows',()=>{
+  assert.equal(normalizeEntry('@target').status,'approved');
+  assert.equal(parseImport('@target',{status:'pending'}).entries[0].status,'pending','Explicit internal status overrides remain available');
+  const s=initialState();s.entries=[entry('target',{id:'123',status:'pending',reason:'Keep',evidence:['https://example.com/proof'],addedAt:'2026-01-01T00:00:00Z'}),entry('unrelated',{status:'pending'})];
+  const original=structuredClone(s.entries[0]),unrelated=structuredClone(s.entries[1]);
+  assert.deepEqual(mergeLocal(s,parseImport(JSON.stringify([{handle:'target',status:'pending',reason:'Replace'}])).entries),{imported:0,duplicates:1,updated:1});
+  assert.deepEqual(s.entries.find(e=>e.handle==='target'),{...original,status:'approved'});assert.deepEqual(s.entries.find(e=>e.handle==='unrelated'),unrelated);
+  assert.deepEqual(mergeLocal(s,parseImport('@target').entries),{imported:0,duplicates:1,updated:0});
+});
+
+test('reimport enabling remains atomic when local or active subscription identities conflict',()=>{
+  for(const incoming of [[{handle:'first'},{handle:'target',id:'999'}],[{handle:'first'},{handle:'new_target',id:'111'},{handle:'new_target',id:'222'}]]) {
+    const s=initialState();s.entries=[entry('first',{status:'pending'}),entry('target',{id:'123',status:'pending'})];const before=structuredClone(s);
+    assert.throws(()=>mergeLocal(s,incoming),/numeric ID/);assert.deepEqual(s,before);
+  }
+  const s=initialState();s.subscriptions=[{id:'sub',enabled:true}];s.entries=[entry('target',{id:'111',status:'pending'}),entry('target',{id:'222',source:'sub'})];const before=structuredClone(s);
+  assert.throws(()=>mergeLocal(s,parseImport('@target').entries),/Conflicting numeric IDs/);assert.deepEqual(s,before);
 });

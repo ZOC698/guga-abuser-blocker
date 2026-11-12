@@ -1,6 +1,6 @@
 # Privacy · 隐私 · プライバシー
 
-Version 0.2.1 preview · 2026-11-12
+Version 0.2.2 preview · 2026-11-12
 
 **Popup drafts:** management form drafts and navigation are retained in extension `storage.session` for the current browser session. Drafts stay in this browser and are not published. Connection outcomes are retained in local extension state so closing the popup does not hide a failed attempt.
 
@@ -8,7 +8,9 @@ Version 0.2.1 preview · 2026-11-12
 
 ## English
 
-**Local data:** imported accounts and numeric IDs, reasons, evidence links, review status, exceptions, subscription URLs, connected numeric account ID and handle, capture results, settings, queue, cooldown and activity are kept in this browser's extension storage. Chrome Sync is not used. The extension has no telemetry, analytics or developer server.
+**Local data:** imported accounts and numeric IDs, reasons, evidence links, enabled/disabled state, exceptions, subscription URLs, connected numeric account ID and handle, capture results, settings, queue, cooldown and activity are kept in this browser's extension storage. Chrome Sync is not used. The extension has no telemetry, analytics or developer server.
+
+**Import behavior:** local imports become enabled without a separate review step; explicitly re-importing matching disabled entries enables them again. Importing does not enable the global automatic-blocking switch, resume a paused queue, remove exceptions or upload entries. When automatic blocking is already enabled and the queue is running, eligible imported entries with numeric IDs can be processed using the connected X account.
 
 **Read-only subscriptions:** the extension reads the public GitHub Raw JSON URLs you add, without credentials. It has no GitHub write or public-list upload feature, does not accept a PAT, and does not send local entries to maintainers. GitHub receives normal request information, such as your IP address. Repository owners control publishing separately.
 
@@ -20,7 +22,9 @@ Version 0.2.1 preview · 2026-11-12
 
 ## 简体中文
 
-账号和数字 ID、理由、证据链接、审核状态、白名单例外、订阅地址、绑定数字账号 ID 和用户名、采集结果、设置、队列、冷却和操作记录保存在当前浏览器扩展存储，不使用 Chrome Sync。没有遥测、统计分析或开发者服务端。
+账号和数字 ID、理由、证据链接、启用或停用状态、白名单例外、订阅地址、绑定数字账号 ID 和用户名、采集结果、设置、队列、冷却和操作记录保存在当前浏览器扩展存储，不使用 Chrome Sync。没有遥测、统计分析或开发者服务端。
+
+本地导入后直接启用，无需额外审核；主动重新导入匹配的已停用条目会重新启用。导入不会打开全局自动拉黑开关、恢复暂停队列、移除例外或上传条目。若自动拉黑已开启且队列正在运行，带数字 ID 并符合条件的导入条目可以通过已连接的 X 账号自动处理。
 
 订阅只有读取功能：以不带认证信息的请求读取你添加的公开 GitHub Raw JSON。扩展没有 GitHub 写入、公共名单上传功能，不接收 PAT，也不把本地条目发送给维护者。GitHub 会收到 IP 地址等普通请求信息；公共发布由仓库维护者独立控制。
 
@@ -34,7 +38,9 @@ Version 0.2.1 preview · 2026-11-12
 
 ## 日本語
 
-アカウントと数値 ID、理由、根拠リンク、確認状態、例外、購読 URL、接続アカウントの数値 ID とユーザー名、収集結果、設定、待機列、待機期限、履歴をこのブラウザーの拡張機能ストレージに保存します。Chrome Sync、テレメトリー、アクセス解析、開発者サーバーは使用しません。
+アカウントと数値 ID、理由、根拠リンク、有効・無効の状態、例外、購読 URL、接続アカウントの数値 ID とユーザー名、収集結果、設定、待機列、待機期限、履歴をこのブラウザーの拡張機能ストレージに保存します。Chrome Sync、テレメトリー、アクセス解析、開発者サーバーは使用しません。
+
+ローカル取り込みは別の確認操作なしで有効になり、明示的な再取り込みは一致する無効項目も再び有効にします。取り込みは自動ブロックの全体設定をオンにせず、一時停止の解除、例外の削除、アップロードも行いません。自動ブロックがオンで待機列が動いていれば、数値 ID があり条件を満たす項目を接続中の X アカウントで自動処理できます。
 
 購読は読み取り専用です。追加した公開 GitHub Raw JSON を認証情報なしで取得します。GitHub 書き込みや公開リストのアップロード機能はなく、PAT を受け付けず、ローカル項目を管理者に送りません。GitHub には IP アドレスなど通常の通信情報が届きます。公開はリポジトリ管理者が別途管理します。
 

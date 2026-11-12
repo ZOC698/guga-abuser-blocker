@@ -1,6 +1,6 @@
 import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
-import {initialState} from '../extension/lib/core.js';
+import {initialState,effectiveEntries} from '../extension/lib/core.js';
 import {STATE_BUDGET,stateBytes} from '../extension/lib/storage-budget.js';
 
 const RealDate=Date;let clock=RealDate.now();
@@ -64,15 +64,16 @@ test('background enforces message authority and binds identity',async()=>{
   result=await send({type:'IMPORT',text:'@example'},{id:extensionId,url:'https://x.com/home',tab:{id:1}});assert.equal(result.ok,false);assert.equal(storage.state.entries.length,0);
   result=await send({type:'GET_STATE'},{id:'other',url:'chrome-extension://fixture/options.html'});assert.equal(result.ok,false);
 });
-test('import, approval and private exports preserve read-only public boundary',async()=>{
+test('imported rows are enabled and private exports preserve the read-only public boundary',async()=>{
   assert.equal((await send({type:'IMPORT',text:'@example\n@private'})).ok,true);
-  await send({type:'REVIEW',handles:['example'],status:'approved'});
+  assert.ok(storage.state.entries.every(e=>e.status==='approved'));
+  await send({type:'REVIEW',handles:['private'],status:'pending'});
   const pub=await send({type:'EXPORT',kind:'public'});assert.equal(pub.ok,false);
   assert.equal((await send({type:'UPLOAD',entries:[{handle:'example'}]})).ok,false);
   const priv=await send({type:'EXPORT',kind:'private'});assert.equal(priv.ok,true);assert.equal(JSON.parse(priv.text).entries.length,2);assert.equal(priv.text.includes('nativeBlocked'),false);
 });
-test('automatic mode queues only approved entries and pause remains durable',async()=>{
-  let result=await send({type:'SAVE_SETTINGS',settings:{autoBlock:true,intervalSeconds:1}});assert.equal(result.ok,true);assert.equal(result.state.settings.intervalSeconds,30);assert.deepEqual(result.state.queue.map(j=>j.handle),['example']);
+test('automatic mode queues only enabled entries and pause remains durable',async()=>{
+  let result=await send({type:'SAVE_SETTINGS',settings:{autoBlock:true,intervalSeconds:1}});assert.equal(result.ok,true);assert.equal(result.state.settings.intervalSeconds,30);assert.deepEqual(result.state.queue.filter(j=>j.status!=='skipped').map(j=>j.handle),['example']);
   result=await send({type:'PAUSE_QUEUE'});assert.equal(result.state.paused,true);
   result=await send({type:'SAVE_SETTINGS',settings:{language:'ja'}});assert.equal(result.state.paused,true);
   result=await send({type:'ALLOW',handle:'example',enabled:true});assert.equal(result.state.queue[0].status,'skipped');
@@ -355,4 +356,73 @@ test('missing cookie API keeps management available and rejects connection witho
     const connected=await send({type:'BIND_ACCOUNT'});assert.equal(connected.ok,false);assert.equal(storage.state.lastConnection.status,'failed');
     assert.equal(storage.state.settings.sessionInvalid,true);assert.equal(requests.length,0);
   } finally {chrome.cookies=cookieAPI;await reloadWorker();}
+});
+
+test('import immediately enables local hiding without requiring a connected account or review',async()=>{
+  reset();alarms.delete('gab-queue');
+  const result=await send({type:'IMPORT',text:'@target\n@another'});
+  assert.equal(result.ok,true);assert.ok(result.state.entries.every(e=>e.status==='approved'));
+  assert.deepEqual(effectiveEntries(result.state).map(e=>e.handle),['target','another']);assert.equal(result.state.queue.length,0);
+  assert.equal(result.state.settings.autoBlock,false);assert.equal(result.state.paused,true);assert.equal(alarms.has('gab-queue'),false);assert.equal(requests.length,0);
+});
+
+test('import in running automatic mode durably queues enabled numeric targets and schedules normal execution',async()=>{
+  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;alarms.delete('gab-queue');
+  const result=await send({type:'IMPORT',text:JSON.stringify([{handle:'target',id:TARGET}])});
+  assert.equal(result.ok,true);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.queue[0].status,'pending');assert.equal(result.state.queue[0].userId,TARGET);assert.equal(result.state.queue[0].accountId,ACCOUNT);
+  assert.equal(result.state.settings.autoBlock,true);assert.equal(result.state.paused,false);assert.ok(alarms.has('gab-queue'));assert.equal(requests.length,0,'Import schedules after storage commit and does not directly issue a request');
+  await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);assert.equal(posts()[0].body,`user_id=${TARGET}`);
+});
+
+test('import preserves disabled or paused global execution while still preparing the connected queue',async()=>{
+  for(const autoBlock of [false,true]){
+    reset({bound:true});storage.state.settings.autoBlock=autoBlock;storage.state.paused=true;storage.state.pauseReason='Keep this pause';alarms.delete('gab-queue');
+    const result=await send({type:'IMPORT',text:JSON.stringify([{handle:'target',id:TARGET}])});
+    assert.equal(result.ok,true);assert.equal(result.state.queue[0].status,'pending');assert.equal(result.state.settings.autoBlock,autoBlock);assert.equal(result.state.paused,true);assert.equal(result.state.pauseReason,'Keep this pause');
+    assert.equal(alarms.has('gab-queue'),autoBlock);await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);assert.equal(storage.state.queue[0].status,'pending');
+  }
+});
+
+test('import does not clear cooldowns or use an invalid authenticated session',async()=>{
+  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;storage.state.apiCooldown={kind:'rate_limit',until:clock+120000};const cooldown=structuredClone(storage.state.apiCooldown);
+  assert.equal((await send({type:'IMPORT',text:JSON.stringify([{handle:'target',id:TARGET}])})).ok,true);
+  assert.deepEqual(storage.state.apiCooldown,cooldown);await alarmListener({name:'gab-queue'});assert.deepEqual(storage.state.apiCooldown,cooldown);assert.equal(requests.length,0);assert.equal(storage.state.queue[0].status,'pending');
+  reset({bound:true});storage.state.settings.sessionInvalid=true;storage.state.settings.autoBlock=true;storage.state.paused=false;storage.state.pauseReason='Reconnect required';alarms.delete('gab-queue');
+  const result=await send({type:'IMPORT',text:JSON.stringify([{handle:'target',id:TARGET}])});
+  assert.equal(result.ok,true);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.queue.length,0);assert.equal(result.state.settings.sessionInvalid,true);assert.equal(result.state.settings.autoBlock,true);assert.equal(result.state.paused,false);assert.equal(result.state.pauseReason,'Reconnect required');
+  assert.equal(alarms.has('gab-queue'),false);await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);
+});
+
+test('imported handle-only entries wait for IDs and never issue a username-based write',async()=>{
+  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;
+  const result=await send({type:'IMPORT',text:'@target'});
+  assert.equal(result.ok,true);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.queue[0].status,'needs_id');assert.equal(result.state.queue[0].userId,undefined);
+  await alarmListener({name:'gab-queue'});await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);assert.equal(posts().length,0);
+});
+
+test('import cannot bypass handle exceptions retained numeric exceptions or self exclusion',async()=>{
+  reset({bound:true,entries:[{...entry('except','333'),status:'pending'}]});storage.state.allowlist=['except','protected'];
+  const result=await send({type:'IMPORT',text:JSON.stringify([
+    {handle:'renamed_except',id:'333'},{handle:'protected',id:'444'},{handle:'owner',id:'555'},
+    {handle:'self_alias',id:ACCOUNT},{handle:'target',id:TARGET}
+  ])});
+  assert.equal(result.ok,true);assert.ok(result.state.entries.every(e=>e.status==='approved'));assert.deepEqual(result.state.allowlist,['except','protected']);assert.deepEqual(result.state.allowlistPins.except,['333']);
+  assert.deepEqual(result.state.queue.map(job=>[job.handle,job.userId]),[['target',TARGET]]);assert.equal(requests.length,0);assert.deepEqual(result.state.nativeBlocked,{});
+});
+
+test('explicit reimport enables disabled rows preserves metadata and remains atomic on identity conflict',async()=>{
+  reset({bound:true,entries:[{...entry('target',null),status:'pending',reason:'Keep reason',evidence:['https://example.com/proof'],addedAt:'2026-01-01T00:00:00Z'}]});
+  let result=await send({type:'IMPORT',text:JSON.stringify([{handle:'target',id:TARGET,reason:'Overwrite',status:'pending'}])});
+  assert.equal(result.ok,true);assert.equal(result.updated,1);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.entries[0].id,TARGET);assert.equal(result.state.entries[0].reason,'Keep reason');assert.deepEqual(result.state.entries[0].evidence,['https://example.com/proof']);assert.equal(result.state.entries[0].addedAt,'2026-01-01T00:00:00Z');assert.equal(result.state.queue[0].status,'pending');
+  await send({type:'REVIEW',handles:['target'],status:'pending'});assert.equal(storage.state.queue[0].status,'skipped');
+  result=await send({type:'IMPORT',text:'@target'});assert.equal(result.ok,true);assert.equal(result.updated,1);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.entries[0].id,TARGET);assert.equal(result.state.queue.at(-1).status,'pending');assert.equal(result.state.paused,true);assert.equal(result.state.settings.autoBlock,false);
+  storage.state.entries.push({...entry('disabled','111'),status:'pending'});storage.state.settings.autoBlock=true;alarms.delete('gab-queue');const before=structuredClone(storage.state);
+  result=await send({type:'IMPORT',text:JSON.stringify([{handle:'disabled',id:'111'},{handle:'target',id:'222'}])});assert.equal(result.ok,false);assert.deepEqual(storage.state,before);assert.equal(alarms.has('gab-queue'),false);assert.equal(requests.length,0);
+});
+
+test('captured-list import enables and queues targets through the same guarded automatic path',async()=>{
+  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;storage.state.capture.entries=[{handle:'target',id:TARGET}];alarms.delete('gab-queue');
+  const result=await send({type:'IMPORT_CAPTURE'});
+  assert.equal(result.ok,true);assert.equal(result.imported,1);assert.equal(result.state.entries[0].status,'approved');assert.equal(result.state.entries[0].source,'local');assert.equal(result.state.queue[0].status,'pending');assert.ok(alarms.has('gab-queue'));assert.equal(requests.length,0);
+  await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);
 });

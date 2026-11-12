@@ -1,8 +1,8 @@
-# Guga list format · v1
+# Guga list format · v1 · extension 0.2.2
 
-Chinese: 新导入条目一律待审核；公开订阅直接信任维护者的条目。数字 ID 必须保存为字符串，并同时提供当前用户名。
+Chinese: 本地导入直接启用，无需审核；重新导入会重新启用匹配的已停用条目。公开订阅直接信任维护者的条目。数字 ID 必须保存为字符串，并同时提供当前用户名。
 
-日本語: 新規の取り込み項目は確認待ちになります。公開リストの購読は管理者の項目を信頼する操作です。数値 ID は文字列で保存し、現在のユーザー名も指定してください。
+日本語: ローカル取り込みは確認操作なしですぐ有効になり、再取り込みは一致する無効項目も再び有効にします。公開リストの購読は管理者の項目を信頼する操作です。数値 ID は文字列で保存し、現在のユーザー名も指定してください。
 
 ## Public subscription JSON
 
@@ -37,7 +37,7 @@ An illustrative entry below uses placeholders and is **not a recommendation to b
 }
 ```
 
-The extension treats subscription entries as approved because the user explicitly trusts the source. Imported `source`, `status` and `addedAt` fields are not trusted. The extension only reads public subscription files and does not export or upload public lists. The repository maintainer generates the public file with the separate CLI described in CONTRIBUTING.md. Reasons and evidence are curator submissions, not plugin-verified findings.
+The extension enables subscription entries because the user explicitly trusts the source. Imported `source`, `status` and `addedAt` fields are not trusted. The extension only reads public subscription files and does not export or upload public lists. The repository maintainer generates the public file with the separate CLI described in CONTRIBUTING.md. Public publication still requires the maintainer's evidence review; locally enabled entries are not automatically publication-approved. Reasons and evidence are curator submissions, not plugin-verified findings.
 
 Public URLs must have this form:
 
@@ -53,14 +53,18 @@ Supported inputs are newline-separated handles or X profile URLs, CSV, a JSON ar
 
 CSV should begin with `handle`, `username` or `screen_name`, followed by optional columns such as `id,reason,evidence,status`. Quote cells containing commas or newlines. `evidence` can contain a JSON string array; exported CSV quotes it automatically. CSV export prefixes potentially executable spreadsheet formulas with an apostrophe, which may be visible when re-importing text fields.
 
-New local entries become pending regardless of a supplied status. Duplicate inputs are reconciled by handle and numeric ID; conflicting IDs are rejected. Re-importing a known handle can fill a missing ID while retaining its local review status, reason and evidence. An imported matching numeric ID with a new handle can update that local mapping; it does not perform an online rename lookup. Import feedback reports imported, updated and duplicate counts; updated entries can also count as duplicates. Existing nonempty IDs cannot be silently replaced by import. Use the local entry editor to correct an ID; correcting an existing ID resets the entry to pending, while filling a missing ID preserves its review status. Known IDs cannot be cleared. Private JSON and CSV exports contain local entries only, not a complete state backup.
+Local imports are enabled immediately without a separate review step. An explicit re-import also enables matching disabled local entries, regardless of the supplied status. The internal entry values remain `approved` for enabled and `pending` for disabled; these names are retained for schema compatibility and are not evidence that an imported account was reviewed. Queue-job `pending` has a separate meaning: waiting to execute.
+
+Duplicate inputs are reconciled by handle and numeric ID; conflicting IDs are rejected. Re-importing a known handle can fill a missing ID, preserves existing reasons and evidence, and enables that local entry. An imported matching numeric ID with a new handle can update that local mapping; it does not perform an online rename lookup. Import feedback reports imported, updated and duplicate counts; updated entries can also count as duplicates. Existing nonempty IDs cannot be silently replaced by import. Use the local entry editor to correct an ID; correcting an existing ID disables the entry, while filling a missing ID preserves its enabled/disabled state. Known IDs cannot be cleared.
+
+Importing does not enable the global automatic-blocking switch, resume a paused queue or remove exceptions. Automatic processing requires an enabled entry, a verified connected account, an existing numeric target ID and an unpaused queue with automatic blocking enabled. Private JSON and CSV exports contain local entries only, not a complete state backup. Re-importing them enables matching local entries rather than restoring disabled status from the file.
 
 Limits: 4 MiB per imported or downloaded file; 20,000 input entries per file and 20,000 combined stored entries across local lists and subscriptions; at most 20 subscriptions. Chrome storage.local has a 10 MiB quota in supported Chrome versions; combined queue, log and list storage can impose a lower practical limit than the entry count for large reasons or URLs.
 
 ## Identity and Bird Shield
 
-The extension opens profiles by handle. Supplied IDs are pinned and checked before native blocking; a mismatch or inability to verify stops the action. It does not resolve renamed accounts automatically. Local feed filtering remains handle-based. Keep mappings current and review reassigned handles.
+Native API blocking uses the supplied numeric target ID. IDs are pinned and checked before blocking; a mismatch or inability to verify stops the action. It does not resolve renamed accounts automatically. Local feed filtering remains handle-based. Keep mappings current and check reassigned handles.
 
 The original [Bird Shield blacklist directory](https://github.com/free-spirit-dev/bird-shield-blocking/tree/main/bird-shield-blocking/share/blacklist) contains plain text numeric IDs, one per line; [fraud.txt](https://github.com/free-spirit-dev/bird-shield-blocking/blob/main/bird-shield-blocking/share/blacklist/fraud.txt) is a directly inspected example. Those ID-only files are rejected until current handles are supplied. This release does not implement Bird Shield's complete synchronization format or automatically import its lists.
 
-Private source exports and backups stay outside the repository. Only authorized maintainers build the public file with scripts/build-list.mjs, inspect the diff and publish it through their repository access. Subscriber uploads and list PRs are not part of the workflow.
+Private source exports and backups stay outside the repository. Only authorized maintainers build the public file with scripts/build-list.mjs from a separate publication-review file, inspect the diff and publish it through their repository access. A private backup's `approved` value means locally enabled and must not substitute for publication review. Subscriber uploads and list PRs are not part of the workflow.

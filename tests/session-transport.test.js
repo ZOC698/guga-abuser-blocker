@@ -27,6 +27,7 @@ test('MV3 worker sends synthetic HttpOnly cookies on the wire and retains persis
   const profile = path.join(scratch, 'profile');
   const contexts = new Set();
   const sockets = new Set();
+  const unexpectedProxyErrors = [];
   let server;
   const debug = phase => { if (process.env.GAB_TRANSPORT_DEBUG) console.error(`[session transport] ${phase}`); };
   async function bounded(promise, label, timeout = 20000) {
@@ -52,6 +53,7 @@ test('MV3 worker sends synthetic HttpOnly cookies on the wire and retains persis
       }
     }
     debug('cleanup complete');
+    assert.deepEqual(unexpectedProxyErrors, [], 'Unexpected errors on rejected CONNECT sockets must still fail this fixture.');
   });
   const observations = [];
   let seedRequests = 0;
@@ -106,6 +108,14 @@ test('MV3 worker sends synthetic HttpOnly cookies on the wire and retains persis
   });
   server.on('connect', (_request, socket) => {
     rejectedProxyRequests++;
+    // CONNECT hands this raw socket to us. Chromium may reset it while our
+    // deliberate 502 is being sent; those expected rejection races must not
+    // become uncaught errors that strand the isolated browser. Keep every
+    // other error as a test failure, reported after resources have closed.
+    socket.on('error', error => {
+      if (error.code !== 'ECONNRESET' && error.code !== 'EPIPE') unexpectedProxyErrors.push(error);
+      socket.destroy();
+    });
     socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
   });
   await new Promise((resolve, reject) => {

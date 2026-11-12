@@ -4,6 +4,8 @@ The extension and the public subscription list live in this repository. This doc
 
 ## Review decisions
 
+These decisions apply to the maintainer's separate publication worklist. In extension backups, `approved` means locally enabled: imports receive it automatically, so it does not indicate a decision to publish an account.
+
 - `pending`: not reviewed, uncertain, or awaiting evidence. Never published.
 - `approved`: the curator has checked the account, a specific Guga-related reason, and at least one supporting HTTPS link. Eligible for the public list.
 - `excluded`: outside this list's scope, a mistaken match, or not supported by the available evidence. Never published.

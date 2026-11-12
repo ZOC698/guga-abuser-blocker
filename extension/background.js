@@ -119,6 +119,19 @@ async function syncAll() {
   await pump();
 }
 
+async function importLocalEntries(getEntries, extra={}) {
+  const result=await mutate(state=>{
+    const merged=mergeLocal(state,getEntries(state));
+    reconcileQueue(state);
+    if(validId(state.settings.accountId)&&!state.settings.sessionInvalid)enqueueApproved(state);
+    return {...merged,...extra};
+  });
+  // An explicit import enables rows, not the global executor. Schedule only
+  // after the entire import is durable; pump retains pause/auth/cooldown guards.
+  if(result.state.settings.autoBlock&&validId(result.state.settings.accountId)&&!result.state.settings.sessionInvalid)await schedule();
+  return result;
+}
+
 function requireApiAccount(state) {
   if(!validId(state.settings.accountId)||state.settings.sessionInvalid)throw new Error('Reconnect X to verify your current API execution account.');
 }
@@ -282,8 +295,8 @@ async function handle(message,sender) {
         throw error;
       }
     }
-    case 'IMPORT':return mutate(state=>{const parsed=parseImport(message.text);const merged=mergeLocal(state,parsed.entries);reconcileQueue(state);return {...merged,fileDuplicates:parsed.duplicates};});
-    case 'IMPORT_CAPTURE':return mutate(state=>{const result=mergeLocal(state,state.capture.entries.map(e=>({...e,source:'local',status:'pending',reason:'',evidence:[],addedAt:now()})));reconcileQueue(state);return result;});
+    case 'IMPORT':{const parsed=parseImport(message.text);return importLocalEntries(()=>parsed.entries,{fileDuplicates:parsed.duplicates});}
+    case 'IMPORT_CAPTURE':return importLocalEntries(state=>state.capture.entries);
     case 'REVIEW':return mutate(state=>{if(!['approved','pending'].includes(message.status))throw new Error('Invalid review status');const handles=new Set(message.handles.map(normalizeHandle));for(const e of state.entries)if(e.source==='local'&&handles.has(e.handle))e.status=message.status;reconcileQueue(state);if(state.settings.autoBlock){enqueueApproved(state);void schedule();}});
     case 'EDIT_ENTRY':return mutate(state=>{
       const h=normalizeHandle(message.handle);const e=state.entries.find(e=>e.source==='local'&&e.handle===h);if(!e)throw new Error('Local entry not found');

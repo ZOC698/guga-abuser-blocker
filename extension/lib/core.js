@@ -26,7 +26,7 @@ export function safeEvidence(value) {
   }).filter(Boolean);
 }
 
-export function normalizeEntry(value, {source='local', status='pending'}={}) {
+export function normalizeEntry(value, {source='local', status='approved'}={}) {
   const obj = typeof value === 'string' ? {handle:value} : value;
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('Each entry must contain an X handle.');
   const raw = obj.handle ?? obj.screen_name ?? obj.username;
@@ -52,7 +52,7 @@ export function parseCSV(text) {
   return rows;
 }
 
-export function parseImport(text, {source='local', status='pending', strictPublic=false}={}) {
+export function parseImport(text, {source='local', status='approved', strictPublic=false}={}) {
   if (typeof text !== 'string' || new TextEncoder().encode(text).length > MAX_BYTES) throw new Error('List is too large (maximum 4 MB).');
   text = text.replace(/^\uFEFF/,'').trim();
   let values, meta = {};
@@ -144,11 +144,13 @@ export function mergeLocal(state, incoming) {
     const existing=map.get(e.handle);
     if(existing) {
       duplicates++;
-      if(existing.id&&e.id&&existing.id!==e.id)throw new Error(`The numeric ID for @${e.handle} differs from the local record. Edit its identity and review it before importing a replacement.`);
-      if(!existing.id&&e.id) {
-        // Enrichment narrows an existing approval; it never approves a pending row.
-        const next={...existing,id:e.id};
-        for(const alias of [...(idHandles.get(e.id)||[])])if(alias!==e.handle)remove(alias);
+      if(existing.id&&e.id&&existing.id!==e.id)throw new Error(`The numeric ID for @${e.handle} differs from the local record. Correct its local identity before importing a replacement.`);
+      const enrich=!existing.id&&e.id;
+      if(enrich||existing.status!=='approved') {
+        // Explicit import enables matching local rows, including previously
+        // disabled rows. Keep their known identity and user-edited metadata.
+        const next={...existing,...(enrich?{id:e.id}:{}),status:'approved'};
+        if(enrich)for(const alias of [...(idHandles.get(e.id)||[])])if(alias!==e.handle)remove(alias);
         put(next);updated++;
       }
       continue;
@@ -157,8 +159,8 @@ export function mergeLocal(state, incoming) {
     if(aliases.length) {
       const known=map.get(aliases.at(-1));
       for(const alias of aliases)remove(alias);
-      put({...known,handle:e.handle});duplicates++;updated++;
-    } else {put({...e,source:'local',status:'pending'});imported++;}
+      put({...known,handle:e.handle,status:'approved'});duplicates++;updated++;
+    } else {put({...e,source:'local',status:'approved'});imported++;}
   }
   const other=state.entries.filter(e=>e.source!=='local');
   if(map.size+other.length>MAX_ENTRIES) throw new Error('Local storage entry limit reached.');

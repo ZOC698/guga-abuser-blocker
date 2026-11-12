@@ -182,7 +182,10 @@ function renderOverview() {
   $('queue-pause').disabled = !!state.paused;
 }
 function sourceName(entry) { return entry.source === 'local' ? t('sourceLocal') : state.subscriptions?.find((sub) => sub.id === entry.source)?.name || t('sourceSubscription'); }
-function badge(status) { return element('span', t(status), `badge ${status === 'needs_id' ? 'pending' : status}`); }
+function badge(status, kind = 'queue') {
+  const label = kind === 'entry' ? status === 'approved' ? 'entryEnabled' : 'entryDisabled' : status;
+  return element('span', t(label), `badge ${status === 'needs_id' ? 'pending' : status}`);
+}
 function safeLink(url, text, className) {
   try { const parsed = new URL(url); if (!['https:', 'http:'].includes(parsed.protocol)) return null; }
   catch { return null; }
@@ -202,7 +205,7 @@ function renderLibrary() {
     const account = element('td');
     const link = safeLink(`https://x.com/${encodeURIComponent(entry.handle)}`, `@${entry.handle}`, 'account-name'); account.append(link);
     account.append(element('span', entry.id || t('missingNumericId'), 'account-id'));
-    const status = element('td'); status.append(badge(entry.status || 'pending'));
+    const status = element('td'); status.append(badge(entry.status || 'pending', 'entry'));
     const reason = element('td'); reason.append(element('span', entry.reason || t('noReason'), 'reason-text'));
     const source = element('span', sourceName(entry), 'source-text');
     if (entry.evidence?.length) { const evidenceLink = safeLink(entry.evidence[0], t('evidence'), 'row-source-link'); if (evidenceLink) source.append(evidenceLink); }
@@ -314,7 +317,7 @@ async function bindAccount() {
     throw error;
   } finally { bindingAccount = false; renderConnectionStatus(); saveDraft(); }
 }
-async function updateSelection(status) { if (!selected.size) throw new Error(t('selectedRequired')); await request('REVIEW', { handles: [...selected], status }); selected.clear(); renderLibrary(); toast(t(status === 'approved' ? 'approvedSuccess' : 'updatedSuccess')); }
+async function updateSelection(status) { if (!selected.size) throw new Error(t('selectedRequired')); await request('REVIEW', { handles: [...selected], status }); selected.clear(); renderLibrary(); toast(t(status === 'approved' ? 'approvedSuccess' : 'disabledSuccess')); }
 function editEntry(handle) {
   const entry = localEntries().find((value) => value.handle === handle); if (!entry) return;
   editingHandle = handle; $('edit-account').textContent = `@${handle}`; $('edit-id').value = entry.id || ''; $('edit-reason').value = entry.reason || ''; $('edit-evidence').value = (entry.evidence || []).join('\n'); $('entry-dialog').showModal(); $('edit-reason').focus(); saveDraft();
@@ -324,7 +327,7 @@ document.querySelectorAll('[data-panel]').forEach((node) => node.addEventListene
 document.querySelectorAll('[data-go]').forEach((node) => node.addEventListener('click', () => { if (node.dataset.go === 'library' && node.classList.contains('primary')) showImport(); else switchPanel(node.dataset.go); }));
 onClick('show-import', showImport); onClick('close-import', () => { $('import-card').hidden = true; });
 onClick('preview-import', previewImport);
-onClick('confirm-import', async () => { const text = $('import-text').value.trim(); if (!text) throw new Error(t('importEmpty')); previewImport(); const result = await request('IMPORT', { text, format: 'auto', approve: false }); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); $('import-text').value = ''; $('import-file').value = ''; $('file-name').textContent = ''; $('import-preview').hidden = true; $('import-card').hidden = true; $('status-filter').value = result.updated ? 'all' : 'pending'; page = 0; renderLibrary(); });
+onClick('confirm-import', async () => { const text = $('import-text').value.trim(); if (!text) throw new Error(t('importEmpty')); previewImport(); const result = await request('IMPORT', { text, format: 'auto' }); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); $('import-text').value = ''; $('import-file').value = ''; $('file-name').textContent = ''; $('import-preview').hidden = true; $('import-card').hidden = true; $('status-filter').value = 'all'; $('search').value = ''; selected.clear(); page = 0; renderLibrary(); });
 $('import-file').addEventListener('change', () => action(async () => { const file = $('import-file').files?.[0]; if (!file) return; if (file.size > 4 * 1024 * 1024) throw new Error(t('fileTooLarge')); $('import-text').value = await file.text(); $('file-name').textContent = file.name; previewImport(); saveDraft(); }));
 $('import-text').addEventListener('input', () => { $('import-preview').hidden = true; });
 $('search').addEventListener('input', () => { page = 0; renderLibrary(); });
@@ -338,7 +341,7 @@ onClick('remove-selected', async () => { if (!selected.size) throw new Error(t('
 onClick('export-list', () => exportList($('export-kind').value));
 onClick('capture-start', async () => { await request('CAPTURE', { autoScroll: $('auto-scroll').checked }); toast(t('captureStarted')); });
 onClick('capture-stop', async () => { await request('STOP_CAPTURE'); toast(t('captureStopped')); });
-onClick('capture-import', async () => { const result = await request('IMPORT_CAPTURE'); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); });
+onClick('capture-import', async () => { const result = await request('IMPORT_CAPTURE'); toast(t('importSuccess', { count: result.imported ?? 0, updated: result.updated ?? 0, duplicates: (result.duplicates ?? 0) + (result.fileDuplicates ?? 0) })); $('status-filter').value = 'all'; $('search').value = ''; selected.clear(); page = 0; renderLibrary(); });
 $('subscription-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => {
   const url = $('sub-url').value.trim(); let parsed; try { parsed = new URL(url); } catch { throw new Error(t('badRawUrl')); }
   if (parsed.protocol !== 'https:' || parsed.hostname !== 'raw.githubusercontent.com' || parsed.username || parsed.password || parsed.port) throw new Error(t('badRawUrl'));
@@ -361,7 +364,20 @@ onClick('save-interval', async () => { const value = Number($('interval').value)
 $('allow-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { await request('ALLOW', { handle: $('allow-handle').value, enabled: true }); $('allow-handle').value = ''; toast(t('saved')); }, event.submitter); });
 $('allow-chips').addEventListener('click', (event) => { const button = event.target.closest('[data-remove-allow]'); if (button) action(async () => { await request('ALLOW', { handle: button.dataset.removeAllow, enabled: false }); toast(t('exceptionRemoved')); }, button); });
 onClick('close-editor', () => $('entry-dialog').close()); onClick('cancel-editor', () => $('entry-dialog').close());
-$('entry-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { const id = $('edit-id').value.trim(); if (id && !/^\d{1,25}$/.test(id)) throw new Error(t('numericIdInvalid')); if (!id && localEntries().find((entry) => entry.handle === editingHandle)?.id) throw new Error(t('numericIdRequired')); await request('EDIT_ENTRY', { handle: editingHandle, id, reason: $('edit-reason').value, evidence: $('edit-evidence').value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }); $('entry-dialog').close(); toast(t('saved')); }, event.submitter); });
+$('entry-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  action(async () => {
+    const id = $('edit-id').value.trim();
+    const previous = localEntries().find((entry) => entry.handle === editingHandle);
+    if (id && !/^\d{1,25}$/.test(id)) throw new Error(t('numericIdInvalid'));
+    if (!id && previous?.id) throw new Error(t('numericIdRequired'));
+    const identityChanged = Boolean(previous?.id && previous.id !== id);
+    await request('EDIT_ENTRY', { handle: editingHandle, id, reason: $('edit-reason').value, evidence: $('edit-evidence').value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) });
+    $('entry-dialog').close();
+    if (identityChanged) { $('status-filter').value = 'all'; page = 0; renderLibrary(); }
+    toast(t(identityChanged ? 'idCorrectionDisabled' : 'saved'));
+  }, event.submitter);
+});
 if (globalThis.chrome?.storage?.onChanged) chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.state?.newValue) { state = changes.state.newValue; render(); } });
 window.addEventListener('hashchange', () => switchPanel(location.hash.slice(1)));
 switchPanel(requestedPanel);

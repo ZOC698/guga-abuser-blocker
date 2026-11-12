@@ -1,6 +1,6 @@
 # Public subscription list
 
-`guga-blocklist.json` is the stable subscription file. It is published only by authorized maintainers; the extension is a read-only subscriber, accepts no PAT and cannot upload local data. Subscriber list PRs are not the publication workflow. It starts empty: private imports remain pending until reviewed. An empty list is valid and adds no blocking targets. This repository does not contain the private source list.
+`guga-blocklist.json` is the stable subscription file. It is published only by authorized maintainers; the extension is a read-only subscriber, accepts no PAT and cannot upload local data. Subscriber list PRs are not the publication workflow. It remains empty. Local imports are enabled immediately for private use in 0.2.2, which does not publish them. An empty list is valid and adds no blocking targets. This repository does not contain the private source list.
 
 中文：数字 ID 可随后补齐；先使用当前用户名。只有人工审核为 `approved`、填写明确原因并附至少一条 HTTPS 证据链接的账号，才可发布。`pending` 和 `excluded` 不会进入订阅文件。用户名可能改名或被重新使用，维护者需要更新映射。
 
@@ -8,7 +8,7 @@
 
 The publication validator is stricter than the extension's general import format: every published row requires a nonempty reason and at least one evidence link. A valid link is not proof that its claim is true; a maintainer must review the source. Numeric IDs are optional strings, never numbers.
 
-From the repository root, build only reviewed entries from a private file kept **outside this repository**:
+From the repository root, build only publication-reviewed entries from a separate private review file kept **outside this repository**. A local extension backup's `approved` status means enabled for personal use and does not establish that publication review occurred:
 
 ```sh
 node scripts/build-list.mjs --review /absolute/path/to/private-review.json
