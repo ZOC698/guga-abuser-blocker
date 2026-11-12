@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createXApiAdapter, XApiError} from '../extension/lib/x-api.js';
+import {graphqlUserURL, graphqlViewerURL} from '../extension/lib/x-graphql.js';
 
 const ACCOUNT = '9007199254740993';
 const TARGET = '9007199254740995';
@@ -11,6 +12,9 @@ const options = {expectedAccountId: ACCOUNT};
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {
   status, headers: {'content-type': 'application/json; charset=utf-8', ...headers}
 });
+const graphUser = (id, screenName, fields = {}) => ({data: {user: {result: {__typename: 'User', rest_id: id,
+  ...(screenName === undefined ? {} : {core: {screen_name: screenName}}), ...fields}}}});
+const graphViewer = (id, screenName, fields = {}) => ({data: {viewer: {user_results: {result: graphUser(id, screenName, fields).data.user.result}}}});
 function fixture({getSession, fetchImpl, ...config} = {}) {
   const calls = [];
   let sessionCalls = 0;
@@ -51,10 +55,12 @@ test('block adapter sends a single numeric-ID request with explicit browser-sess
 
 test('relationship read accepts true and false without issuing a write', async () => {
   for (const blocking of [false, true]) {
-    const f = fixture({fetchImpl: () => json({id_str: TARGET, blocking})});
+    const f = fixture({fetchImpl: () => json(graphUser(TARGET, 'target', {relationship_perspectives: {blocking}}))});
     assert.equal((await f.adapter.readRelationship(TARGET, options)).blocking, blocking);
     assert.equal(f.calls.length, 1);
-    assert.equal(f.calls[0][0], `https://x.com/i/api/1.1/users/show.json?user_id=${TARGET}`);
+    const url = new URL(f.calls[0][0]);assert.equal(url.origin, 'https://x.com');
+    assert.equal(url.pathname, '/i/api/graphql/mxaYWwt52eAb6OAzYHMVzg/UserByRestId');
+    assert.deepEqual(JSON.parse(url.searchParams.get('variables')), {userId: TARGET, withSafetyModeUserFields: true});
     assert.equal(f.calls[0][1].method, 'GET');
     assert.equal(f.calls[0][1].body, undefined);
   }
@@ -197,49 +203,47 @@ test('request rejection is distinct from HTTP success without a valid result', a
   await expectError(noResult.adapter.blockUser(TARGET, options), {kind: 'response', status: 204, uncertain: true});
 });
 
-test('account verification reads authenticated settings before resolving and matching the session ID', async () => {
-  const f = fixture({fetchImpl: url => url.endsWith('/account/settings.json')
-    ? json({screen_name: 'Owner_User'}) : json({id_str: ACCOUNT, screen_name: 'OWNER_USER'})});
+test('account verification reads the authenticated Viewer and matches its ID to the browser session', async () => {
+  const f = fixture({fetchImpl: () => json(graphViewer(ACCOUNT, 'OWNER_USER'))});
   assert.deepEqual(await f.adapter.verifyAccount(), {accountId: ACCOUNT, handle: 'owner_user'});
-  assert.deepEqual(f.calls.map(([url]) => url), [
-    'https://x.com/i/api/1.1/account/settings.json',
-    'https://x.com/i/api/1.1/users/show.json?screen_name=owner_user'
-  ]);
-  assert.equal(f.sessionCalls(), 4);
+  assert.equal(f.calls.length, 1);assert.equal(f.calls[0][0], graphqlViewerURL());
+  assert.equal(f.sessionCalls(), 2);
   for (const [, init] of f.calls) {assert.equal(init.method, 'GET');assert.equal(init.body, undefined);assert.equal(init.credentials, 'include');}
 });
 
-test('account verification cannot replace server identity with a cookie-ID lookup or mismatched handle', async () => {
-  for (const [settings, profile, kind, count] of [
-    [{id_str: ACCOUNT}, {id_str: ACCOUNT, screen_name: 'owner'}, 'response', 1],
-    [{screen_name: '@owner'}, {id_str: ACCOUNT, screen_name: 'owner'}, 'response', 1],
-    [{screen_name: 'owner'}, {id_str: TARGET, screen_name: 'owner'}, 'account_changed', 2],
-    [{screen_name: 'owner'}, {id_str: ACCOUNT, screen_name: 'other'}, 'response', 2],
-    [{screen_name: 'owner'}, {id_str: Number(ACCOUNT), screen_name: 'owner'}, 'response', 2],
-    [{screen_name: 'owner'}, {id_str: ACCOUNT, screen_name: 'owner', suspended: true}, 'auth', 2]
+test('Viewer verification rejects target lookups missing identity and mismatched numeric accounts', async () => {
+  for (const [body, kind] of [
+    [graphUser(ACCOUNT, 'owner'), 'response'],
+    [{screen_name: 'owner', id_str: ACCOUNT}, 'response'],
+    [graphViewer(ACCOUNT, '@owner'), 'response'],
+    [graphViewer(TARGET, 'owner'), 'account_changed'],
+    [graphViewer(Number(ACCOUNT), 'owner'), 'response'],
+    [graphViewer(ACCOUNT, undefined), 'response'],
+    [graphViewer(ACCOUNT, 'owner', {__typename: undefined}), 'response'],
+    [graphViewer(ACCOUNT, 'owner', {suspended: true}), 'auth']
   ]) {
-    const f = fixture({fetchImpl: url => json(url.endsWith('/account/settings.json') ? settings : profile)});
-    await expectError(f.adapter.verifyAccount(), {kind, uncertain: false});assert.equal(f.calls.length, count);
+    const f = fixture({fetchImpl: () => json(body)});
+    await expectError(f.adapter.verifyAccount(), {kind, route: 'Viewer', uncertain: false});assert.equal(f.calls.length, 1);
   }
   const f = fixture();
   await expectError(f.adapter.verifyAccount({expectedAccountId: TARGET}), {kind: 'account_changed', uncertain: false});assert.equal(f.calls.length, 0);
 });
 
-test('account changes between either verification request fail closed without writes', async () => {
-  for (const changeAt of [2, 3, 4]) {
+test('account changes before or after Viewer verification fail closed without writes', async () => {
+  for (const changeAt of [1, 2]) {
     const f = fixture({getSession: count => count >= changeAt ? {...SESSION, accountId: TARGET} : SESSION,
-      fetchImpl: url => json(url.endsWith('/account/settings.json') ? {screen_name: 'owner'} : {screen_name: 'owner', id_str: ACCOUNT})});
-    await expectError(f.adapter.verifyAccount(), {kind: 'account_changed', uncertain: false});
-    assert.equal(f.calls.length, changeAt === 4 ? 2 : 1);assert.ok(f.calls.every(([, init]) => init.method === 'GET'));
+      fetchImpl: () => json(graphViewer(ACCOUNT, 'owner'))});
+    await expectError(f.adapter.verifyAccount({expectedAccountId: ACCOUNT}), {kind: 'account_changed', uncertain: false});
+    assert.equal(f.calls.length, changeAt === 1 ? 0 : 1);assert.ok(f.calls.every(([, init]) => init.method === 'GET'));
   }
 });
 
 test('handle resolution is read-only, exact after case normalization, and returns only validated identity', async () => {
-  const f = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'TaRgEt_UsEr', description: AUTH, blocking: false})});
+  const f = fixture({fetchImpl: () => json(graphUser(TARGET, 'TaRgEt_UsEr', {description: AUTH, relationship_perspectives: {blocking: false}}))});
   assert.deepEqual(await f.adapter.resolveUser('@TARGET_USER', options), {accountId: ACCOUNT, targetId: TARGET, handle: 'target_user'});
-  assert.equal(f.calls.length, 1);assert.equal(f.calls[0][0], 'https://x.com/i/api/1.1/users/show.json?screen_name=target_user');
+  assert.equal(f.calls.length, 1);assert.equal(f.calls[0][0], graphqlUserURL('UserByScreenName', 'target_user'));
   assert.equal(f.calls[0][1].method, 'GET');assert.equal(f.calls[0][1].body, undefined);
-  const self = fixture({fetchImpl: () => json({id_str: ACCOUNT, screen_name: 'owner'})});
+  const self = fixture({fetchImpl: () => json(graphUser(ACCOUNT, 'owner'))});
   assert.equal((await self.adapter.resolveUser('owner', options)).targetId, ACCOUNT);
 });
 
@@ -249,8 +253,8 @@ test('resolver rejects query injection, precision loss and mismatched response h
     await expectError(invalid.adapter.resolveUser(handle, options), {kind: 'validation', uncertain: false});
   }
   await expectError(invalid.adapter.resolveUser('target'), {kind: 'validation', uncertain: false});assert.equal(invalid.calls.length, 0);
-  for (const body of [{id_str: TARGET, screen_name: 'renamed'}, {id_str: Number(TARGET), screen_name: 'target'},
-    {id_str: '0', screen_name: 'target'}, {id: TARGET, screen_name: 'target'}, {id_str: TARGET, screen_name: '@target'}]) {
+  for (const body of [graphUser(TARGET, 'renamed'), graphUser(Number(TARGET), 'target'),
+    graphUser('0', 'target'), {id: TARGET, screen_name: 'target'}, graphUser(TARGET, '@target')]) {
     const f = fixture({fetchImpl: () => json(body)});
     await expectError(f.adapter.resolveUser('target', options), {kind: 'response', uncertain: false});assert.equal(f.calls.length, 1);
   }
@@ -265,7 +269,8 @@ test('legacy target codes classify suspension and unavailability without claimin
     }
   }
   for (const flag of ['suspended', 'deactivated', 'deactivated_bit']) {
-    const f = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'target', [flag]: true})});
+    const f = fixture({fetchImpl: url => json(url.includes('/graphql/')
+      ? graphUser(TARGET, 'target', {[flag]: true}) : {id_str: TARGET, screen_name: 'target', [flag]: true})});
     await expectError(f.adapter.resolveUser('target', options), {kind: flag === 'suspended' ? 'target_suspended' : 'target_unavailable', uncertain: false});
     await expectError(f.adapter.readRelationship(TARGET, options), {kind: flag === 'suspended' ? 'target_suspended' : 'target_unavailable', uncertain: false});
     await expectError(f.adapter.blockUser(TARGET, options), {kind: flag === 'suspended' ? 'target_suspended' : 'target_unavailable', uncertain: true});
@@ -293,11 +298,11 @@ test('coded HTTP 200 errors remain unverified writes even when the error categor
   await expectError(f.adapter.resolveUser('target', options), {kind: 'rate_limit', code: 88, retryAt: timestamp + 10000, uncertain: false});
 });
 
-test('verification shares one deadline across both reads and cannot issue a late follow-up', async () => {
+test('Viewer verification has a deadline and cannot issue a late follow-up', async () => {
   let release;
   const f = fixture({timeoutMs: 10, fetchImpl: () => new Promise(resolve => {release = resolve;})});
   await expectError(f.adapter.verifyAccount(), {kind: 'timeout', uncertain: false});
-  release(json({screen_name: 'owner'}));await new Promise(resolve => setImmediate(resolve));assert.equal(f.calls.length, 1);
+  release(json(graphViewer(ACCOUNT, 'owner')));await new Promise(resolve => setImmediate(resolve));assert.equal(f.calls.length, 1);
 });
 
 test('the write guard runs after session validation and before the sole POST', async () => {
@@ -322,7 +327,7 @@ test('timed-out write guards cannot cause late POSTs and reads never invoke writ
   await expectError(f.adapter.blockUser(TARGET, {...options, beforeWrite: () => new Promise(resolve => {release = resolve;})}), {kind: 'timeout', uncertain: false});
   release();await new Promise(resolve => setImmediate(resolve));assert.equal(f.calls.length, 0);
   let guards = 0;
-  const read = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'target', blocking: false})});
+  const read = fixture({fetchImpl: () => json(graphUser(TARGET, 'target', {relationship_perspectives: {blocking: false}}))});
   await read.adapter.readRelationship(TARGET, {...options, beforeWrite: () => {guards++;}});
   await read.adapter.resolveUser('target', {...options, beforeWrite: () => {guards++;}});
   assert.equal(guards, 0);assert.ok(read.calls.every(([, init]) => init.method === 'GET'));
@@ -387,11 +392,187 @@ test('a timed-out dispatch guard cannot produce a late POST or reserve budget tw
 test('reads never invoke dispatch guards and a changed session is rejected before the guard', async () => {
   let dispatchGuards = 0;
   const callback = () => {dispatchGuards++;};
-  const read = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'target', blocking: false})});
+  const read = fixture({fetchImpl: () => json(graphUser(TARGET, 'target', {relationship_perspectives: {blocking: false}}))});
   await read.adapter.readRelationship(TARGET, {...options, beforeDispatch: callback});
   await read.adapter.resolveUser('target', {...options, beforeDispatch: callback});
   assert.equal(dispatchGuards, 0);
   const switched = fixture({getSession: count => count === 1 ? SESSION : {...SESSION, accountId: TARGET}});
   await expectError(switched.adapter.blockUser(TARGET, {...options, beforeWrite: async () => {}, beforeDispatch: callback}), {kind: 'account_changed', uncertain: false});
   assert.equal(dispatchGuards, 0);assert.equal(switched.calls.length, 0);
+});
+
+test('diagnostics distinguish fixed read routes without disclosing query data or server text', async () => {
+  for (const [failingRoute, method, value] of [['Viewer', 'verifyAccount', undefined], ['UserByScreenName', 'resolveUser', 'private_fixture'], ['UserByRestId', 'readRelationship', TARGET]]) {
+    const privateHandle = 'private_fixture';
+    const f = fixture({fetchImpl: url => json({errors: [{code: 34, message: `${url} ${AUTH} ${CSRF}`}]}, 404)});
+    await assert.rejects(f.adapter[method](value, options), error => {
+      assert.equal(error.kind, 'request');assert.equal(error.status, 404);assert.equal(error.code, 34);assert.equal(error.route, failingRoute);
+      const diagnostic = error.toJSON();assert.equal(diagnostic.route, failingRoute);
+      const serialized = JSON.stringify(diagnostic);
+      for (const value of [privateHandle, ACCOUNT, AUTH, CSRF, 'https://', 'screen_name=', '?']) assert.equal(serialized.includes(value), false, value);
+      return true;
+    });
+    assert.equal(f.calls.length, 1);
+    assert.ok(f.calls.every(([, init]) => init.method === 'GET'));
+  }
+});
+
+test('endpoint diagnostics survive session network body parser guard and timeout failures', async () => {
+  const cases = [
+    [fixture({getSession: () => null}), 'readRelationship', TARGET, options, 'UserByRestId', 'auth', false],
+    [fixture({fetchImpl: () => {throw new Error(`${AUTH} ${CSRF}`);}}), 'resolveUser', 'private_fixture', options, 'UserByScreenName', 'network', false],
+    [fixture({fetchImpl: () => new Response(AUTH, {headers: {'content-type': 'application/json'}})}), 'blockUser', TARGET, options, 'blocks/create.json', 'response', true],
+    [fixture({fetchImpl: () => json(graphUser(TARGET, 'wrong'))}), 'resolveUser', 'private_fixture', options, 'UserByScreenName', 'response', false],
+    [fixture(), 'blockUser', TARGET, {...options, beforeDispatch: () => false}, 'blocks/create.json', 'cancelled', false],
+    [fixture({timeoutMs: 10, fetchImpl: () => new Promise(() => {})}), 'verifyAccount', undefined, undefined, 'Viewer', 'timeout', false]
+  ];
+  for (const [f, method, value, config, route, kind, uncertain] of cases) {
+    await expectError(f.adapter[method](value, config), {route, kind, uncertain});
+    assert.ok(f.calls.length <= 1);
+  }
+  const invalid = fixture();await expectError(invalid.adapter.blockUser('not-an-id', options), {kind: 'validation', route: null});assert.equal(invalid.calls.length, 0);
+});
+
+test('diagnostic route construction accepts only explicit endpoint labels', () => {
+  for (const route of ['Viewer', 'UserByScreenName', 'UserByRestId', 'blocks/create.json']) {
+    assert.equal(new XApiError('Safe fixture', {kind: 'response', route}).toJSON().route, route);
+  }
+  for (const route of [`users/show.json?screen_name=private_fixture`, `https://x.com/i/api/1.1/users/show.json`, AUTH, CSRF, '../users/show.json', 'other.json', '', undefined, null, {}, 1]) {
+    const error = new XApiError('Safe fixture', {kind: 'response', route});assert.equal(error.route, null);assert.equal(error.toJSON().route, null);
+    assert.equal(JSON.stringify(error).includes(AUTH), false);assert.equal(JSON.stringify(error).includes(CSRF), false);
+  }
+});
+
+test('packaged GraphQL queries permit only fixed read operations and observed metadata', () => {
+  for (const [operation, value, queryId] of [['UserByScreenName', 'TARGET_USER', 'AMIBMjtxEEATh4z8V9GtRg'],
+    ['UserByRestId', TARGET, 'mxaYWwt52eAb6OAzYHMVzg']]) {
+    const url = new URL(graphqlUserURL(operation, value));
+    assert.equal(url.origin, 'https://x.com');assert.equal(url.pathname, `/i/api/graphql/${queryId}/${operation}`);
+    assert.deepEqual([...url.searchParams.keys()], ['variables', 'features', 'fieldToggles']);
+    const variables = JSON.parse(url.searchParams.get('variables'));
+    assert.deepEqual(variables, operation === 'UserByScreenName'
+      ? {screen_name: 'target_user', withGrokTranslatedBio: true} : {userId: TARGET, withSafetyModeUserFields: true});
+    const features = JSON.parse(url.searchParams.get('features'));
+    assert.equal(Object.keys(features).length, operation === 'UserByScreenName' ? 12 : 10);
+    assert.ok(Object.values(features).every(value => typeof value === 'boolean'));
+    assert.equal(features.responsive_web_profile_redirect_enabled, true);
+    assert.deepEqual(JSON.parse(url.searchParams.get('fieldToggles')), {withPayments: false, withAuxiliaryUserLabels: true});
+  }
+  for (const [operation, value] of [['https://evil.test/query', 'target'], ['blocks/create.json', TARGET],
+    ['UserByScreenName', 'target&screen_name=other'], ['UserByRestId', '../1'], ['UserByRestId', Number(TARGET)]]) {
+    assert.throws(() => graphqlUserURL(operation, value), TypeError);
+  }
+});
+
+test('GraphQL reads accept old and new user shapes and consistently duplicated identity fields', async () => {
+  for (const body of [
+    graphUser(TARGET, 'TaRgEt', {relationship_perspectives: {blocking: false}}),
+    graphUser(TARGET, undefined, {legacy: {screen_name: 'target', id_str: TARGET, blocking: false}}),
+    graphUser(TARGET, 'TARGET', {legacy: {screen_name: 'target', id_str: TARGET, blocking: false}, relationship_perspectives: {blocking: false}})
+  ]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    assert.deepEqual(await f.adapter.resolveUser('target', options), {accountId: ACCOUNT, targetId: TARGET, handle: 'target'});
+    assert.deepEqual(await f.adapter.readRelationship(TARGET, options), {accountId: ACCOUNT, targetId: TARGET, blocking: false});
+    assert.ok(f.calls.every(([, init]) => init.method === 'GET'));
+  }
+});
+
+test('conflicting malformed or absent GraphQL identity and relationship fields fail closed', async () => {
+  for (const body of [
+    graphUser(TARGET, 'target', {legacy: {screen_name: 'other', blocking: true}}),
+    graphUser(TARGET, 'target', {legacy: {id_str: '123', blocking: true}}),
+    graphUser(TARGET, 'target', {legacy: {blocking: false}, relationship_perspectives: {blocking: true}}),
+    graphUser(TARGET, 'target', {legacy: {blocking: 'false'}, relationship_perspectives: {blocking: false}}),
+    graphUser(TARGET, 'target', {relationship_perspectives: {blocking: 1}}),
+    graphUser(TARGET, 'target', {relationship_perspectives: null}),
+    graphUser(TARGET, 'target', {core: {screen_name: null}, legacy: {screen_name: 'target', blocking: true}}),
+    graphUser(Number(TARGET), 'target', {relationship_perspectives: {blocking: true}}),
+    graphUser('123', 'target', {relationship_perspectives: {blocking: true}}),
+    graphUser(TARGET, 'target'),
+    {data: {user: {result: null}, recommendation: graphUser(TARGET, 'target', {relationship_perspectives: {blocking: true}})}},
+    {id_str: TARGET, screen_name: 'target', blocking: true}
+  ]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    await expectError(f.adapter.readRelationship(TARGET, options), {kind: 'response', route: 'UserByRestId', uncertain: false});
+    assert.equal(f.calls.length, 1);assert.equal(f.calls[0][1].method, 'GET');
+  }
+  const missingHandle = fixture({fetchImpl: () => json(graphUser(TARGET, undefined, {relationship_perspectives: {blocking: false}}))});
+  await expectError(missingHandle.adapter.resolveUser('target', options), {kind: 'response', route: 'UserByScreenName'});
+});
+
+test('unavailable GraphQL results and error envelopes cannot manufacture an unblocked relationship', async () => {
+  for (const body of [{data: {user: {result: {__typename: 'UserUnavailable', reason: 'Unavailable'}}}},
+    {...graphUser(TARGET, 'target', {relationship_perspectives: {blocking: false}}), errors: []},
+    graphUser(TARGET, 'target', {__typename: 'UnknownResult', relationship_perspectives: {blocking: false}})]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    await expectError(f.adapter.readRelationship(TARGET, options), {kind: body.data.user.result.__typename === 'UserUnavailable' ? 'target_unavailable' : 'response', uncertain: false, route: 'UserByRestId'});
+  }
+  const own = fixture({fetchImpl: () => json({data: {viewer: {user_results: {result: {__typename: 'UserUnavailable'}}}}})});
+  await expectError(own.adapter.verifyAccount(), {kind: 'auth', route: 'Viewer', uncertain: false});
+});
+
+test('the unchanged block POST parser does not treat a GraphQL profile as a write acknowledgement', async () => {
+  const f = fixture({fetchImpl: () => json(graphUser(TARGET, 'target', {relationship_perspectives: {blocking: true}}))});
+  await expectError(f.adapter.blockUser(TARGET, options), {kind: 'response', route: 'blocks/create.json', uncertain: true});
+  assert.equal(f.calls.length, 1);assert.equal(f.calls[0][0], 'https://x.com/i/api/1.1/blocks/create.json');assert.equal(f.calls[0][1].body, `user_id=${TARGET}`);
+});
+
+test('Viewer timeout covers post-response session verification without late retries', async () => {
+  let release;
+  const f = fixture({timeoutMs: 10, fetchImpl: () => json(graphViewer(ACCOUNT, 'owner')),
+    getSession: count => count === 1 ? SESSION : new Promise(resolve => {release = resolve;})});
+  await expectError(f.adapter.verifyAccount(), {kind: 'timeout', route: 'Viewer', uncertain: false});
+  release(SESSION);await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.length, 1);assert.ok(f.calls.every(([, init]) => init.method === 'GET'));
+});
+
+test('Viewer query metadata is fixed and contains no requested identity or external destination', async () => {
+  const url = new URL(graphqlViewerURL());
+  assert.equal(url.origin, 'https://x.com');assert.equal(url.pathname, '/i/api/graphql/TpQxQtWMTMnIAMPlMGMqNw/Viewer');
+  assert.deepEqual([...url.searchParams.keys()], ['variables', 'features', 'fieldToggles']);
+  assert.deepEqual(JSON.parse(url.searchParams.get('variables')), {withCommunitiesMemberships: false});
+  assert.deepEqual(JSON.parse(url.searchParams.get('features')), {
+    subscriptions_upsells_api_enabled: false,
+    profile_label_improvements_pcf_label_in_post_enabled: true,
+    responsive_web_profile_redirect_enabled: true,
+    rweb_tipjar_consumption_enabled: false,
+    verified_phone_label_enabled: false,
+    creator_subscriptions_tweet_preview_api_enabled: true,
+    responsive_web_graphql_timeline_navigation_enabled: true
+  });
+  assert.deepEqual(JSON.parse(url.searchParams.get('fieldToggles')), {withAuxiliaryUserLabels: true, isDelegate: false});
+  const f = fixture({fetchImpl: () => json(graphViewer(ACCOUNT, 'owner'))});
+  assert.deepEqual(await f.adapter.verifyAccount({targetId: TARGET, targetHandle: 'other', url: 'https://evil.test/'}), {accountId: ACCOUNT, handle: 'owner'});
+  assert.equal(f.calls.length, 1);assert.equal(f.calls[0][0], url.toString());
+  assert.equal(url.toString().includes(ACCOUNT), false);assert.equal(url.toString().includes(TARGET), false);
+});
+
+test('Viewer shares strict old and new User parsing without requiring a block relationship', async () => {
+  for (const body of [graphViewer(ACCOUNT, 'OWNER'),
+    graphViewer(ACCOUNT, undefined, {legacy: {id_str: ACCOUNT, screen_name: 'owner'}}),
+    graphViewer(ACCOUNT, 'owner', {legacy: {id_str: ACCOUNT, screen_name: 'OWNER'}})]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    assert.deepEqual(await f.adapter.verifyAccount(), {accountId: ACCOUNT, handle: 'owner'});
+    assert.equal(f.calls.length, 1);assert.equal(f.sessionCalls(), 2);
+  }
+  for (const body of [
+    graphViewer(ACCOUNT, 'owner', {legacy: {screen_name: 'other'}}),
+    graphViewer(ACCOUNT, 'owner', {legacy: {id_str: TARGET}}),
+    graphViewer(ACCOUNT, 'owner', {legacy: {blocking: true}, relationship_perspectives: {blocking: false}}),
+    {...graphViewer(ACCOUNT, 'owner'), errors: []}
+  ]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    await expectError(f.adapter.verifyAccount(), {kind: 'response', route: 'Viewer', uncertain: false});
+  }
+});
+
+test('Viewer requires the exact authenticated result path and does not search other users', async () => {
+  const result = graphUser(ACCOUNT, 'owner').data.user.result;
+  for (const body of [{data: {user: {result}}}, {data: {viewer: {result}}},
+    {data: {viewer: {user_results: {result: null}}, user: {result}}},
+    {data: {viewer: {user_results: {result: {...result, __typename: 'UnknownResult'}}}}}]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    await expectError(f.adapter.verifyAccount(), {kind: 'response', route: 'Viewer', uncertain: false});
+    assert.equal(f.calls.length, 1);
+  }
 });

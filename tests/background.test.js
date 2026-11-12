@@ -7,19 +7,26 @@ const RealDate=Date;let clock=RealDate.now();
 globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}};
 after(()=>{globalThis.Date=RealDate;});
 const ACCOUNT='9007199254740993',OTHER_ACCOUNT='9007199254740997',TARGET='9007199254740995',CSRF='a'.repeat(64);
+const SCREEN_PATH='/i/api/graphql/AMIBMjtxEEATh4z8V9GtRg/UserByScreenName',REST_PATH='/i/api/graphql/mxaYWwt52eAb6OAzYHMVzg/UserByRestId';
+const VIEWER_PATH='/i/api/graphql/TpQxQtWMTMnIAMPlMGMqNw/Viewer';
+const VIEWER_FEATURES={subscriptions_upsells_api_enabled:false,profile_label_improvements_pcf_label_in_post_enabled:true,responsive_web_profile_redirect_enabled:true,rweb_tipjar_consumption_enabled:false,verified_phone_label_enabled:false,creator_subscriptions_tweet_preview_api_enabled:true,responsive_web_graphql_timeline_navigation_enabled:true};
 let storage={state:initialState()},session={},listener,alarmListener,startupListener,cookieListener,alarms=new Map();
 let cookieAccount=ACCOUNT,cookieCSRF=CSRF,cookieHook=null,cookieReads=[],requests=[],tabCalls=[],fetchHook=null,blocked=new Set(),serial=0;
 const serverHandles=new Map([[ACCOUNT,'owner'],[OTHER_ACCOUNT,'other_owner']]);
 const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});
+const graphUser=(id,handle='target',blocking=false)=>({data:{user:{result:{__typename:'User',rest_id:id,core:{screen_name:handle},relationship_perspectives:{blocking}}}}});
+const graphViewer=(id,handle)=>({data:{viewer:{user_results:{result:graphUser(id,handle).data.user.result}}}});
+const graphVariables=call=>JSON.parse(new URL(call.url).searchParams.get('variables'));
 const originalFetch=globalThis.fetch;after(()=>{globalThis.fetch=originalFetch;});
 async function fakeFetch(url,init={}) {
   const call={url:String(url),method:init.method||'GET',body:init.body,init};requests.push(call);
   if(fetchHook){const response=await fetchHook(call);if(response!==undefined)return response;}
-  const parsed=new URL(call.url);assert.equal(parsed.origin,'https://x.com');assert.equal(init.credentials,'include');assert.equal(init.redirect,'error');
-  if(parsed.pathname.endsWith('/account/settings.json'))return json({screen_name:serverHandles.get(cookieAccount)});
-  if(parsed.pathname.endsWith('/users/show.json')&&parsed.searchParams.has('screen_name')){const handle=parsed.searchParams.get('screen_name');return json({id_str:[...serverHandles].find(([,name])=>name===handle)?.[0],screen_name:handle});}
-  if(parsed.pathname.endsWith('/users/show.json')){const id=parsed.searchParams.get('user_id');return json({id_str:id,blocking:blocked.has(`${cookieAccount}:${id}`)});}
-  if(parsed.pathname.endsWith('/blocks/create.json')){assert.equal(call.method,'POST');const body=new URLSearchParams(call.body);assert.deepEqual([...body.keys()],['user_id']);const id=body.get('user_id');assert.match(id,/^[1-9]\d{0,24}$/);blocked.add(`${cookieAccount}:${id}`);return json({id_str:id,blocking:true});}
+  const parsed=new URL(call.url);assert.equal(init.credentials,'include');assert.equal(init.redirect,'error');
+  assert.equal(parsed.origin,'https://x.com');
+  if(parsed.pathname===VIEWER_PATH){assert.equal(call.method,'GET');assert.deepEqual([...parsed.searchParams.keys()].sort(),['features','fieldToggles','variables']);assert.deepEqual(graphVariables(call),{withCommunitiesMemberships:false});assert.deepEqual(JSON.parse(parsed.searchParams.get('features')),VIEWER_FEATURES);assert.deepEqual(JSON.parse(parsed.searchParams.get('fieldToggles')),{withAuxiliaryUserLabels:true,isDelegate:false});return json(graphViewer(cookieAccount,serverHandles.get(cookieAccount)));}
+  if(parsed.pathname===SCREEN_PATH){assert.equal(call.method,'GET');const handle=graphVariables(call).screen_name;return json(graphUser([...serverHandles].find(([,name])=>name===handle)?.[0],handle));}
+  if(parsed.pathname===REST_PATH){assert.equal(call.method,'GET');const id=graphVariables(call).userId;assert.match(id,/^[1-9]\d{0,24}$/);return json(graphUser(id,'target',blocked.has(`${cookieAccount}:${id}`)));}
+  if(parsed.pathname==='/i/api/1.1/blocks/create.json'){assert.equal(call.method,'POST');const body=new URLSearchParams(call.body);assert.deepEqual([...body.keys()],['user_id']);const id=body.get('user_id');assert.match(id,/^[1-9]\d{0,24}$/);blocked.add(`${cookieAccount}:${id}`);return json({id_str:id,blocking:true});}
   throw new Error('Unexpected fixture endpoint');
 }
 globalThis.fetch=fakeFetch;
@@ -42,7 +49,7 @@ function reset({bound=false,entries=[]}={}){clock+=60000;storage={state:initialS
 async function until(predicate){for(let i=0;i<300;i++){if(predicate()){await new Promise(resolve=>setImmediate(resolve));return;}await new Promise(resolve=>setTimeout(resolve,1));}assert.ok(predicate(),'Fixture operation did not settle');}
 async function runQueue(){const result=await send({type:'START_QUEUE'});assert.equal(result.ok,true,result.error);await until(()=>!storage.state.queue.some(job=>job.status==='running')&&(storage.state.queue.some(job=>['done','failed','uncertain','skipped','needs_id'].includes(job.status))||storage.state.apiCooldown));return storage.state;}
 const posts=()=>requests.filter(call=>call.method==='POST');
-const apiPaths=()=>requests.map(call=>new URL(call.url).pathname.replace('/i/api/1.1/',''));
+const apiPaths=()=>requests.map(call=>new URL(call.url).pathname.replace(/^\/(?:i\/api\/)?1\.1\//,'').replace(/^\/i\/api\/graphql\/[^/]+\//,''));
 async function reloadWorker(){await import(`../extension/background.js?api-test-${++serial}`);await send({type:'GET_STATE'});}
 
 test('new browser session discards stale tab ownership and pauses interrupted writes',async()=>{
@@ -53,7 +60,7 @@ test('new browser session discards stale tab ownership and pauses interrupted wr
 });
 
 test('background enforces message authority and binds identity',async()=>{
-  let result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true,result.error);assert.equal(result.state.settings.accountHandle,'owner');assert.equal(result.state.settings.accountId,ACCOUNT);assert.deepEqual(apiPaths(),['account/settings.json','users/show.json']);assert.deepEqual(tabCalls,[]);
+  let result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true,result.error);assert.equal(result.state.settings.accountHandle,'owner');assert.equal(result.state.settings.accountId,ACCOUNT);assert.deepEqual(apiPaths(),['Viewer']);assert.deepEqual(tabCalls,[]);
   result=await send({type:'IMPORT',text:'@example'},{id:extensionId,url:'https://x.com/home',tab:{id:1}});assert.equal(result.ok,false);assert.equal(storage.state.entries.length,0);
   result=await send({type:'GET_STATE'},{id:'other',url:'chrome-extension://fixture/options.html'});assert.equal(result.ok,false);
 });
@@ -140,11 +147,15 @@ test('oversized legacy state remains paused, exportable and recoverable after up
   result=await send({type:'REMOVE_ENTRIES',handles:['legacy']});assert.equal(result.ok,true);assert.equal(result.state.entries.length,0);assert.equal(session.gabRecovery,false);assert.equal(result.state.paused,true);
 });
 
-test('production API queue performs one numeric POST and independent readback without tab operations',async()=>{
+test('production API queue performs GraphQL preflight, one numeric POST and independent GraphQL readback without tabs',async()=>{
   reset({entries:[entry()]});assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);
   fetchHook=async call=>{if(call.method==='POST'){assert.equal(storage.state.apiBudget.writes.length,1);assert.ok(storage.state.queue[0].writeAttemptAt);}return undefined;};
   await runQueue();assert.equal(storage.state.queue[0].status,'done');assert.equal(storage.state.queue[0].accountId,ACCOUNT);assert.equal(posts().length,1);
-  assert.deepEqual(apiPaths(),['account/settings.json','users/show.json','users/show.json','blocks/create.json','users/show.json']);assert.deepEqual(tabCalls,[]);
+  assert.deepEqual(apiPaths(),['Viewer','UserByRestId','blocks/create.json','UserByRestId']);
+  assert.deepEqual(requests.map(call=>new URL(call.url).origin),Array(4).fill('https://x.com'));
+  assert.deepEqual(requests.map(call=>call.method),['GET','GET','POST','GET']);
+  assert.deepEqual(graphVariables(requests[0]),{withCommunitiesMemberships:false});
+  assert.deepEqual([graphVariables(requests[1]).userId,graphVariables(requests[3]).userId],[TARGET,TARGET]);assert.deepEqual(tabCalls,[]);
   assert.ok(storage.state.nativeBlocked[`id:${ACCOUNT}`][`id:${TARGET}`]);assert.equal(JSON.stringify(storage).includes(CSRF),false);
 });
 
@@ -178,7 +189,7 @@ test('lost POST response remains uncertain and retry reads the relationship with
 });
 
 test('post-write 429 and false readbacks are uncertain rather than confirmed success or retryable writes',async()=>{
-  for(const mode of ['rate','false']){reset({bound:true,entries:[entry()]});let wrote=false;fetchHook=async call=>{if(call.method==='POST'){wrote=true;return undefined;}if(wrote)return mode==='rate'?json({errors:[{code:88}]},429,{'retry-after':'90'}):json({id_str:TARGET,blocking:false});return undefined;};
+  for(const mode of ['rate','false']){reset({bound:true,entries:[entry()]});let wrote=false;fetchHook=async call=>{if(call.method==='POST'){wrote=true;return undefined;}if(wrote)return mode==='rate'?json({errors:[{code:88}]},429,{'retry-after':'90'}):json(graphUser(TARGET,'target',false));return undefined;};
     await runQueue();assert.equal(storage.state.queue[0].status,'uncertain');assert.equal(storage.state.paused,true);assert.equal(posts().length,1);assert.deepEqual(storage.state.nativeBlocked,{});if(mode==='rate')assert.equal(storage.state.apiCooldown.until,clock+90000);
   }
 });
@@ -209,14 +220,69 @@ test('unavailable or suspended target errors skip only that target with no write
 });
 
 test('closed popup connection outcomes remain readable after response delivery is lost',async()=>{
-  reset();let release;fetchHook=async call=>call.url.endsWith('/account/settings.json')?new Promise(resolve=>{release=resolve;}):undefined;const sender={id:extensionId,url:'chrome-extension://fixture/popup.html'};
-  assert.equal(listener({type:'BIND_ACCOUNT'},sender,()=>{throw new Error('Fixture popup closed');}),true);await until(()=>release);assert.equal(storage.state.lastConnection.status,'connecting');release(json({screen_name:'owner'}));await until(()=>storage.state.lastConnection.status==='connected');assert.equal((await send({type:'GET_STATE'})).state.settings.accountId,ACCOUNT);
+  reset();let release;fetchHook=async call=>new URL(call.url).pathname===VIEWER_PATH?new Promise(resolve=>{release=resolve;}):undefined;const sender={id:extensionId,url:'chrome-extension://fixture/popup.html'};
+  assert.equal(listener({type:'BIND_ACCOUNT'},sender,()=>{throw new Error('Fixture popup closed');}),true);await until(()=>release);assert.equal(storage.state.lastConnection.status,'connecting');release(json(graphViewer(ACCOUNT,'owner')));await until(()=>storage.state.lastConnection.status==='connected');assert.equal((await send({type:'GET_STATE'})).state.settings.accountId,ACCOUNT);
   release=null;listener({type:'BIND_ACCOUNT'},sender,()=>{});await until(()=>release);release(json({errors:[{code:89}]},401));await until(()=>storage.state.lastConnection.status==='failed');const state=(await send({type:'GET_STATE'})).state;assert.equal(state.settings.accountId,ACCOUNT);assert.equal(state.settings.sessionInvalid,true);assert.ok(state.lastConnection.error);
 });
 
+test('failed binding exposes safe HTTP route diagnostics and durably stops the queue',async()=>{
+  reset({bound:true,entries:[entry()]});
+  assert.equal((await send({type:'QUEUE_APPROVED'})).ok,true);
+  storage.state.settings.autoBlock=true;storage.state.paused=false;
+  const untrustedDetail='fixture-private-server-detail';
+  fetchHook=async call=>new URL(call.url).pathname===VIEWER_PATH
+    ?json({errors:[{message:untrustedDetail}]},404):undefined;
+
+  // Exercise the real adapter's XApiError path; this HTTP failure has no API code.
+  const result=await send({type:'BIND_ACCOUNT'});
+  assert.equal(result.ok,false);assert.match(result.error,/HTTP 404/);assert.match(result.error,/Viewer/);
+  for(const secret of [untrustedDetail,CSRF,'variables=','TpQxQtWMTMnIAMPlMGMqNw'])assert.equal(result.error.includes(secret),false);
+  let state=(await send({type:'GET_STATE'})).state;
+  assert.equal(state.lastConnection.status,'failed');assert.equal(state.lastConnection.error,result.error);
+  assert.equal(state.pauseReason,result.error);assert.equal(state.settings.autoBlock,false);
+  assert.equal(state.settings.sessionInvalid,true);assert.equal(state.paused,true);
+  assert.equal(state.queue[0].status,'pending');assert.equal(posts().length,0);
+  assert.deepEqual(apiPaths(),['Viewer']);
+
+  const requestCount=requests.length;
+  await reloadWorker();await alarmListener({name:'gab-watchdog'});
+  state=(await send({type:'GET_STATE'})).state;
+  assert.equal(state.lastConnection.status,'failed');assert.equal(state.lastConnection.error,result.error);
+  assert.equal(state.settings.autoBlock,false);assert.equal(state.settings.sessionInvalid,true);assert.equal(state.paused,true);
+  assert.equal(state.queue[0].status,'pending');assert.equal(requests.length,requestCount);assert.equal(posts().length,0);
+});
+
+test('Viewer rejection retains HTTP and X error codes without exposing response text',async()=>{
+  reset();
+  fetchHook=async()=>json({errors:[{code:34,message:'fixture-untrusted-server-message'}]},404);
+  const result=await send({type:'BIND_ACCOUNT'});
+  assert.equal(result.ok,false);assert.match(result.error,/HTTP 404/);assert.match(result.error,/X 34/);assert.match(result.error,/Viewer/);
+  assert.equal(result.error.includes('fixture-untrusted-server-message'),false);
+  assert.equal(storage.state.lastConnection.status,'failed');assert.equal(storage.state.lastConnection.error,result.error);
+  assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(posts().length,0);
+  assert.deepEqual(apiPaths(),['Viewer']);
+  assert.equal(new URL(requests[0].url).origin,'https://x.com');
+  assert.deepEqual(graphVariables(requests[0]),{withCommunitiesMemberships:false});
+});
+
+test('binding requires the current server Viewer identity and never falls back to a target lookup',async()=>{
+  for(const response of [graphViewer(OTHER_ACCOUNT,'other_owner'),graphUser(ACCOUNT,'owner')]){
+    reset({bound:true,entries:[entry()]});
+    assert.equal((await send({type:'QUEUE_APPROVED'})).ok,true);
+    storage.state.settings.autoBlock=true;storage.state.paused=false;
+    fetchHook=async()=>json(response);
+    const result=await send({type:'BIND_ACCOUNT'});
+    assert.equal(result.ok,false);assert.equal(storage.state.lastConnection.status,'failed');
+    assert.equal(storage.state.settings.accountId,ACCOUNT);assert.equal(storage.state.settings.sessionInvalid,true);
+    assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);
+    await alarmListener({name:'gab-watchdog'});
+    assert.deepEqual(apiPaths(),['Viewer']);assert.equal(posts().length,0);assert.equal(storage.state.queue[0].status,'pending');
+  }
+});
+
 test('a stale account verification cannot overwrite the latest connection outcome',async()=>{
-  reset();let release,settingsCalls=0;fetchHook=async call=>{if(call.url.endsWith('/account/settings.json')&&++settingsCalls===1)return new Promise(resolve=>{release=resolve;});return undefined;};
-  const first=send({type:'BIND_ACCOUNT'});await until(()=>release);const firstId=storage.state.lastConnection.requestId;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);const latestId=storage.state.lastConnection.requestId;assert.notEqual(firstId,latestId);release(json({screen_name:'owner'}));assert.equal((await first).ok,false);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.lastConnection.requestId,latestId);
+  reset();let release,viewerCalls=0;fetchHook=async call=>{if(new URL(call.url).pathname===VIEWER_PATH&&++viewerCalls===1)return new Promise(resolve=>{release=resolve;});return undefined;};
+  const first=send({type:'BIND_ACCOUNT'});await until(()=>release);const firstId=storage.state.lastConnection.requestId;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);const latestId=storage.state.lastConnection.requestId;assert.notEqual(firstId,latestId);release(json(graphViewer(ACCOUNT,'owner')));assert.equal((await first).ok,false);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.lastConnection.requestId,latestId);
 });
 
 test('legacy handle-only bindings cannot automatically execute after migration',async()=>{
@@ -264,7 +330,7 @@ test('a replaced source identity cannot redirect an uncertain write readback to 
     const expected=outcome==='blocked'?'done':outcome==='not-blocked'?'skipped':'uncertain';
     await until(()=>storage.state.queue.find(job=>job.id==='old-write')?.status===expected);
     const original=storage.state.queue.find(job=>job.id==='old-write');assert.equal(original.userId,'111');assert.equal(original.accountId,ACCOUNT);
-    const apiRequests=requests.filter(call=>call.url.startsWith('https://x.com/'));assert.equal(apiRequests.length,1);assert.equal(new URL(apiRequests[0].url).searchParams.get('user_id'),'111');assert.equal(apiRequests[0].method,'GET');assert.equal(posts().length,0);
+    const apiRequests=requests.filter(call=>call.url.startsWith('https://x.com/'));assert.equal(apiRequests.length,1);assert.equal(graphVariables(apiRequests[0]).userId,'111');assert.equal(apiRequests[0].method,'GET');assert.equal(posts().length,0);
     assert.ok(storage.state.queue.some(job=>job.userId==='222'&&job.status==='pending'));
     if(outcome==='blocked')assert.ok(storage.state.nativeBlocked[`id:${ACCOUNT}`]['id:111']);else assert.deepEqual(storage.state.nativeBlocked,{});
     if(outcome==='error'){assert.equal(original.reconcileOnly,true);assert.equal(storage.state.paused,true);}
@@ -278,7 +344,7 @@ test('switching execution accounts leaves another account readback pending witho
   cookieAccount=OTHER_ACCOUNT;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);requests=[];
   await runQueue();const original=storage.state.queue.find(job=>job.id==='account-a-readback'),current=storage.state.queue.find(job=>job.accountId===OTHER_ACCOUNT);
   assert.equal(original.status,'pending');assert.equal(original.reconcileOnly,true);assert.equal(original.accountId,ACCOUNT);assert.equal(original.userId,'111');assert.equal(current.userId,'222');assert.equal(current.status,'done');assert.equal(storage.state.paused,false);
-  assert.equal(posts().length,1);assert.equal(posts()[0].body,'user_id=222');assert.deepEqual(requests.filter(call=>call.method==='GET').map(call=>new URL(call.url).searchParams.get('user_id')),['222','222']);assert.ok(storage.state.nativeBlocked[`id:${OTHER_ACCOUNT}`]['id:222']);assert.equal(storage.state.nativeBlocked[`id:${ACCOUNT}`],undefined);
+  assert.equal(posts().length,1);assert.equal(posts()[0].body,'user_id=222');assert.deepEqual(requests.filter(call=>call.method==='GET').map(call=>graphVariables(call).userId),['222','222']);assert.ok(storage.state.nativeBlocked[`id:${OTHER_ACCOUNT}`]['id:222']);assert.equal(storage.state.nativeBlocked[`id:${ACCOUNT}`],undefined);
 });
 
 test('missing cookie API keeps management available and rejects connection without sending requests',async()=>{

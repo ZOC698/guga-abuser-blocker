@@ -1,10 +1,10 @@
 # Privacy · 隐私 · プライバシー
 
-Version 0.2.0 preview · 2026-11-12
+Version 0.2.1 preview · 2026-11-12
 
 **Popup drafts:** management form drafts and navigation are retained in extension `storage.session` for the current browser session. Drafts stay in this browser and are not published. Connection outcomes are retained in local extension state so closing the popup does not hide a failed attempt.
 
-**X session access:** the background session provider reads X’s `twid` and `ct0` cookies, not `auth_token`. Those cookie values are used only in request memory, never written to local/session storage or returned to the UI. Chrome sends the ordinary authentication cookies back to X when fetching X with credentials. The packaged public web-client Bearer constant is not a user credential. Session material is sent only to X; numeric account ID and handle are retained locally as binding identifiers.
+**X session access:** the background session provider reads X’s `twid` and `ct0` cookies, not `auth_token`. Those cookie values are used only in request memory, never written to local/session storage or returned to the UI. Chrome sends the ordinary authentication cookies back to X when fetching X with credentials. The packaged public web-client Bearer constant is not a user credential. Session material is sent only to X (x.com); numeric account ID and handle are retained locally as binding identifiers.
 
 ## English
 
@@ -26,7 +26,7 @@ Version 0.2.0 preview · 2026-11-12
 
 原生拉黑通过已登录会话调用 X 网页内部接口，不再点击用户主页菜单；核对数字身份并读回拉黑关系后才记录成功。需要在浏览器登录 X，无需向扩展输入 X 密码、开发者密钥或 GitHub PAT；这不是开发者 OAuth 授权，内部接口可能随 X 更新变化。内容脚本仍用于本地隐藏与可选的可见名单采集。
 
-后台只读取 X 的 `twid` 和 `ct0` Cookie，不读取 `auth_token`。这些 Cookie 值仅在单次请求内存中使用，不写入 local/session 存储，也不传给界面。Chrome 会在向 X 发起带凭证请求时正常附带认证 Cookie。打包的公开网页客户端 Bearer 常量不是用户凭证。会话信息只发给 X；数字账号 ID 和用户名作为绑定标识保存在本地。
+后台只读取 X 的 `twid` 和 `ct0` Cookie，不读取 `auth_token`。这些 Cookie 值仅在单次请求内存中使用，不写入 local/session 存储，也不传给界面。Chrome 会在向 X 发起带凭证请求时正常附带认证 Cookie。打包的公开网页客户端 Bearer 常量不是用户凭证。会话信息只发给 X（x.com）；数字账号 ID 和用户名作为绑定标识保存在本地。
 
 私人 JSON / CSV 仅在用户主动导出时下载，包含本地条目，没有公共分享导出。私人备份可能包含账号及证据，不应放进公共仓库或发行包；它不是全部设置、订阅和日志的完整备份。
 
@@ -40,7 +40,7 @@ Version 0.2.0 preview · 2026-11-12
 
 ブロックにはログイン済みセッションから X のウェブ内部 API を使用し、プロフィールのメニューはクリックしません。数値 ID とブロック関係を確認してから成功を記録します。ブラウザーでの X ログインは必要ですが、X パスワード・開発者キー・GitHub PAT を拡張機能に入力する必要はありません。開発者 OAuth 認可ではなく、内部 API は X の更新で変更される可能性があります。コンテンツスクリプトは非表示や任意の表示済み一覧収集に使用します。
 
-バックグラウンドは X の `twid` と `ct0` Cookie だけを読み取り、`auth_token` は読み取りません。Cookie 値はリクエストのメモリー内だけで使用し、local/session ストレージへの保存や UI への返却はしません。Chrome は X への認証付き通信で通常の認証 Cookie を送信します。同梱する公開ウェブクライアントの Bearer 定数はユーザーの認証情報ではありません。セッション情報の送信先は X だけで、数値アカウント ID とユーザー名は接続識別子としてローカルに保存します。
+バックグラウンドは X の `twid` と `ct0` Cookie だけを読み取り、`auth_token` は読み取りません。Cookie 値はリクエストのメモリー内だけで使用し、local/session ストレージへの保存や UI への返却はしません。Chrome は X への認証付き通信で通常の認証 Cookie を送信します。同梱する公開ウェブクライアントの Bearer 定数はユーザーの認証情報ではありません。セッション情報の送信先は X（x.com）だけで、数値アカウント ID とユーザー名は接続識別子としてローカルに保存します。
 
 非公開 JSON / CSV は操作時だけダウンロードされ、ローカル項目を含みます。公開用書き出しはありません。個人のアカウントや根拠を含む可能性があるため、公開リポジトリや配布物には含めないでください。設定・購読・履歴の完全なバックアップではありません。
 

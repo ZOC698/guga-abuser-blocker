@@ -1,4 +1,4 @@
-# Guga Abuser Blocker · 0.2.0 preview
+# Guga Abuser Blocker · 0.2.1 preview
 
 [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
 
@@ -40,7 +40,7 @@ Private JSON and CSV downloads contain local entries only, not all settings, sub
 
 ## Blocking and current limits
 
-Version 0.2.0 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
+Version 0.2.1 sends background requests to X’s web internal API using the browser’s signed-in session. It reads back the blocking relationship through that API before recording success; the queue no longer clicks profile menus. These private web endpoints are different from the documented developer OAuth API and can change without notice.
 
 Every native block requires an existing numeric target ID. A handle-only approved entry waits as **Needs numeric ID**, without sending a block request. Add an ID to a local entry, or wait for the subscription maintainer to supply it. No automatic handle-to-ID lookup is performed by the queue. IDs and the connected numeric account identity are checked around execution; content hiding still matches handles.
 

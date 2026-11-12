@@ -6,23 +6,27 @@
  * or log credentials. Callers must persist rate-limit deadlines and reconcile
  * uncertain writes before deciding whether another write is permitted.
  */
-const API_ROOT = 'https://x.com/i/api/1.1';
+import {graphqlUserURL, graphqlViewerURL, parseGraphqlUser, parseGraphqlViewer, GraphqlUserError} from './x-graphql.js';
+
 const ID_PATTERN = /^\d{1,25}$/;
+// Diagnostic labels are fixed endpoint names, never request URLs or parameters.
+const SAFE_ROUTES = new Set(['Viewer', 'UserByScreenName', 'UserByRestId', 'blocks/create.json']);
 
 export class XApiError extends Error {
-  constructor(message, {kind, status = null, code = null, retryAt = null, uncertain = false} = {}) {
+  constructor(message, {kind, status = null, code = null, route = null, retryAt = null, uncertain = false} = {}) {
     super(message);
     this.name = 'XApiError';
     this.kind = kind;
     this.status = status;
     this.code = code;
+    this.route = SAFE_ROUTES.has(route) ? route : null;
     this.retryAt = retryAt;
     this.uncertain = uncertain;
   }
 
   toJSON() {
     return {name: this.name, message: this.message, kind: this.kind,
-      status: this.status, code: this.code, retryAt: this.retryAt, uncertain: this.uncertain};
+      status: this.status, code: this.code, route: this.route, retryAt: this.retryAt, uncertain: this.uncertain};
   }
 }
 
@@ -90,8 +94,9 @@ export function createXApiAdapter({getSession, fetchImpl = globalThis.fetch,
     let timedOut = false;
     let timer;
     let accountId = expectedAccountId;
+    let activeRoute = null;
     const uncertain = () => write && dispatched;
-    const error = (kind, message, details = {}) => new XApiError(message, {kind, uncertain: uncertain(), ...details});
+    const error = (kind, message, details = {}) => new XApiError(message, {kind, route: activeRoute, uncertain: uncertain(), ...details});
     const active = () => {
       if (timedOut) throw error('timeout', 'X operation timed out.');
     };
@@ -195,7 +200,14 @@ export function createXApiAdapter({getSession, fetchImpl = globalThis.fetch,
       return null;
     }
 
-    async function send(path, isWrite = false) {
+    async function send(route, value) {
+      activeRoute = SAFE_ROUTES.has(route) ? route : null;
+      // Every destination is packaged here. Callers cannot supply a URL, host,
+      // query ID, arbitrary query parameter, or an alternate write operation.
+      const isWrite = route === 'blocks/create.json';
+      const url = route === 'Viewer' ? graphqlViewerURL()
+        : isWrite ? 'https://x.com/i/api/1.1/blocks/create.json'
+          : graphqlUserURL(route, value);
       let before = await session();
       if (isWrite && beforeWrite) {
         let permitted;
@@ -217,7 +229,6 @@ export function createXApiAdapter({getSession, fetchImpl = globalThis.fetch,
         if (permitted === false) throw error('cancelled', 'The queued X write was cancelled before dispatch.');
       }
       active();
-      const url = `${API_ROOT}/${path}`;
       const headers = {
         accept: 'application/json',
         authorization: before.authorization,
@@ -257,34 +268,32 @@ export function createXApiAdapter({getSession, fetchImpl = globalThis.fetch,
       return document;
     }
 
-    function user(document, expectedHandle) {
-      const handle = responseHandle(document.screen_name);
-      if (!validId(document.id_str) || !handle || (expectedHandle && handle !== expectedHandle)) {
-        throw error('response', 'X did not confirm the requested numeric identity and handle.', {status: 200});
+    function user(document, constraints) {
+      try {return verify ? parseGraphqlViewer(document) : parseGraphqlUser(document, constraints);}
+      catch (cause) {
+        const kind = cause instanceof GraphqlUserError ? cause.kind : 'response';
+        throw error(verify && ['target_unavailable', 'target_suspended'].includes(kind) ? 'auth' : kind,
+          'X did not confirm the requested user identity and relationship.', {status: 200});
       }
-      if (document.suspended === true || document.deactivated === true || document.deactivated_bit === true) {
-        throw error(verify ? 'auth' : document.suspended ? 'target_suspended' : 'target_unavailable',
-          verify ? 'The X execution account is unavailable.' : 'X reports that the target account is unavailable.', {status: 200});
-      }
-      return {targetId: document.id_str, handle};
     }
 
     async function run() {
       if (verify) {
-        // users/show?user_id=<cookieID> alone only looks up that user. The first
-        // endpoint must identify the actual authenticated server-side session.
-        const settings = await send('account/settings.json');
-        const handle = responseHandle(settings.screen_name);
-        if (!handle) throw error('response', 'X did not identify the authenticated account.', {status: 200});
-        const result = user(await send(`users/show.json?screen_name=${encodeURIComponent(handle)}`), handle);
+        // Viewer identifies the authenticated server-side session, never a
+        // caller-supplied target. Match it to the session checked around fetch.
+        const result = user(await send('Viewer'));
         if (result.targetId !== accountId) throw error('account_changed', 'The authenticated X account differs from the browser session identity.', {status: 200});
         return {accountId, handle: result.handle};
       }
       if (resolve) {
-        const result = user(await send(`users/show.json?screen_name=${encodeURIComponent(requestedHandle)}`), requestedHandle);
-        return {accountId, ...result};
+        const result = user(await send('UserByScreenName', requestedHandle), {expectedHandle: requestedHandle});
+        return {accountId, targetId: result.targetId, handle: result.handle};
       }
-      const document = await send(write ? 'blocks/create.json' : `users/show.json?user_id=${targetId}`, write);
+      if (!write) {
+        const result = user(await send('UserByRestId', targetId), {expectedId: targetId, requireRelationship: true});
+        return {accountId, targetId, blocking: result.blocking};
+      }
+      const document = await send('blocks/create.json');
       if (document.id_str !== targetId) throw error('response', 'X did not confirm the requested target and block relationship.', {status: 200});
       if (document.suspended === true || document.deactivated === true || document.deactivated_bit === true) {
         throw error(document.suspended ? 'target_suspended' : 'target_unavailable', 'X reports that the target account is unavailable.', {status: 200});

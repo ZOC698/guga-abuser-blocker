@@ -141,7 +141,14 @@ function guardJob(state,picked,{readOnly=false}={}) {
   if(state.paused||state.runId!==picked.runId||!job||job.status!=='running'||job.accountId!==state.settings.accountId||job.userId!==picked.job.userId||(!entry&&!(readOnly&&job.reconcileOnly))||!validId(job.userId))throw new Error('The API queue, account or approved target changed.');
   return job;
 }
-function errorText(error){return error instanceof XApiError?error.message:String(error?.message||'The operation failed.').slice(0,300);}
+function errorText(error){
+  if(!(error instanceof XApiError))return String(error?.message||'The operation failed.').slice(0,300);
+  const details=[];
+  if(Number.isInteger(error.status)&&error.status>=100&&error.status<=599)details.push(`HTTP ${error.status}`);
+  if(Number.isInteger(error.code)&&error.code>=0&&error.code<=9999)details.push(`X ${error.code}`);
+  if(['Viewer','UserByScreenName','UserByRestId','blocks/create.json'].includes(error.route))details.push(error.route);
+  return `${error.message}${details.length?` (${details.join('; ')})`:''}`;
+}
 function noteCooldown(state,kind,until){
   const timestamp=Date.now();
   const deadline=Number.isFinite(until)&&until>timestamp?until:timestamp+15*60*1000;
@@ -319,7 +326,7 @@ async function handle(message,sender) {
     default:throw new Error('Unknown operation.');
   }
 }
-chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:String(err.message??err)}));return true;});
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:errorText(err)}));return true;});
 chrome.alarms.onAlarm.addListener(alarm=>ready.then(()=>{if(alarm.name==='gab-sync')return syncAll();if(['gab-queue','gab-watchdog'].includes(alarm.name))return pump();}));
 chrome.cookies?.onChanged?.addListener(change=>{
   if(!['twid','ct0'].includes(change.cookie?.name)||!['x.com','.x.com'].includes(change.cookie?.domain))return;
