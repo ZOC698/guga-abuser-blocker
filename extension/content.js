@@ -1,8 +1,8 @@
-/* Guga Abuser Blocker: DOM-only adapter for X. No cookies or private API calls. */
+/* Guga Abuser Blocker: read-only X page filtering, identity and list capture. */
 (() => {
   'use strict';
 
-  const CONTENT_VERSION = '0.1.2';
+  const CONTENT_VERSION = '0.2.0';
   if (globalThis.__gugaAbuserBlockerLoaded === CONTENT_VERSION) return;
   globalThis.__gugaAbuserBlockerLoaded = CONTENT_VERSION;
 
@@ -16,7 +16,6 @@
   let blocked = new Set();
   let sweepTimer = null;
   let capturing = null;
-  let blocking = false;
   let lastURL = location.href;
   const hidden = new Map();
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -34,10 +33,6 @@
       const match = url.pathname.match(/^\/([a-zA-Z0-9_]{1,15})\/?$/);
       return match ? handle(match[1]) : null;
     } catch { return null; }
-  }
-
-  function handlesInText(value) {
-    return [...new Set([...String(value || '').matchAll(/(?:^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]{1,15})(?![a-zA-Z0-9_])/g)].map(match => handle(match[1])).filter(Boolean))];
   }
 
   function identity() {
@@ -100,8 +95,10 @@
   function excludedIds(current) {
     const own = handle(current.settings?.accountHandle);
     const ids = new Set((current.entries || [])
-      .filter(entry => enabledEntry(entry, current) && entry.id && (allowed(current, handle(entry.handle)) || handle(entry.handle) === own))
+      .filter(entry => entry.id && (allowed(current, handle(entry.handle)) || handle(entry.handle) === own))
       .map(entry => String(entry.id)));
+    const ownId = current.settings?.accountId;
+    if (typeof ownId === 'string' && /^\d{1,25}$/.test(ownId)) ids.add(ownId);
     const pins = current.allowlistPins;
     if (pins && typeof pins === 'object' && !Array.isArray(pins)) {
       for (const value of current.allowlist || []) {
@@ -126,143 +123,6 @@
     state = next || { settings: {}, entries: [], subscriptions: [], allowlist: [] };
     blocked = new Set(eligibleEntries(state).map(entry => handle(entry.handle)));
     scheduleSweep();
-  }
-
-  async function freshState() {
-    const result = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
-    if (!result?.ok || !result.state) throw new Error(result?.error || 'The extension could not verify the current queue.');
-    return result.state;
-  }
-
-  function currentProfile(target) {
-    if (profileFromURL(location.href) !== target) throw new Error('The worker tab is no longer on the exact target profile.');
-    const main = document.querySelector('main [data-testid="primaryColumn"]') || document.querySelector('main');
-    if (!main) throw new Error('X profile has not loaded.');
-    const names = [...main.querySelectorAll('[data-testid="UserName"]')].filter(element => !element.closest('article,[data-testid="UserCell"]') && visible(element));
-    if (names.length !== 1) throw new Error('Cannot uniquely verify the target profile header.');
-    const matches = handlesInText(names[0].innerText || names[0].textContent);
-    if (matches.length !== 1 || matches[0] !== target) throw new Error('The visible profile does not match the queued handle.');
-    return main;
-  }
-
-  async function guard(request) {
-    const current = await freshState();
-    const target = handle(request.handle);
-    const account = handle(request.accountHandle);
-    const job = (current.queue || []).find(item => item.id === request.jobId);
-    if (!target || !account || target === account) throw new Error('Invalid target or self-block request.');
-    if (current.paused || current.runId !== request.runId || !job || job.status !== 'running' || handle(job.handle) !== target || handle(job.accountHandle) !== account) throw new Error('The block queue was paused, replaced, or cancelled.');
-    if (handle(current.settings?.accountHandle) !== account || identity() !== account) throw new Error('The signed-in X account has changed.');
-    const eligible = eligibleEntries(current).filter(entry => handle(entry.handle) === target);
-    if (allowed(current, target) || eligible.length === 0) throw new Error('This account is no longer approved for blocking.');
-    const main = currentProfile(target);
-    const expectedIds = new Set([request.id, request.userId, job.userId, ...eligible.map(entry => entry.id)].filter(Boolean).map(String));
-    const actualId = profileId(main);
-    if (!actualId) throw new Error('The profile numeric ID is not available; no block action was sent.');
-    if (excludedIds(current).has(actualId)) throw new Error('This numeric account is excluded by an account alias or your own identity.');
-    if (expectedIds.size > 1) throw new Error('Approved lists disagree about the numeric ID of this handle.');
-    if (expectedIds.size === 1 && (!actualId || !expectedIds.has(actualId))) throw new Error('The profile numeric ID is missing or differs from the approved account.');
-    return main;
-  }
-
-  function profileButtons(main, selector) {
-    return [...main.querySelectorAll(selector)].filter(element => visible(element) && !element.closest('article,[data-testid="UserCell"],[role="menu"],[role="dialog"]'));
-  }
-
-  function isBlocked(main) {
-    return profileButtons(main, '[data-testid$="-unblock"]').some(element => /^\d+-unblock$/.test(element.dataset.testid));
-  }
-
-  function profileId(main) {
-    const ids = new Set(profileButtons(main, '[data-testid$="-follow"],[data-testid$="-unfollow"],[data-testid$="-block"],[data-testid$="-unblock"]').map(element => element.dataset.testid.match(/^(\d+)-(?:follow|unfollow|block|unblock)$/)?.[1]).filter(Boolean));
-    return ids.size === 1 ? [...ids][0] : null;
-  }
-
-  async function waitFor(check, timeout = 8000) {
-    const until = Date.now() + timeout;
-    let lastError;
-    while (Date.now() < until) {
-      try {
-        const result = check();
-        if (result) return result;
-      } catch (error) { lastError = error; }
-      await sleep(200);
-    }
-    throw lastError || new Error('X did not show the expected control in time.');
-  }
-
-  async function nativeBlock(request) {
-    if (blocking) return { ok: false, error: 'Another block operation is already active in this tab.' };
-    blocking = true;
-    let actionTriggered = false;
-    try {
-      const target = handle(request.handle);
-      await waitFor(() => currentProfile(target), 12000);
-      let main = await guard(request);
-      if (isBlocked(main)) return { ok: true, alreadyBlocked: true, id: profileId(main) };
-      const initialId = profileId(main);
-      if (initialId && !request.id) request = { ...request, id: initialId };
-      if (document.querySelector('[role="dialog"] [data-testid="confirmationSheetConfirm"]')) throw new Error('Close the existing confirmation dialog before continuing.');
-      const more = profileButtons(main, '[data-testid="userActions"]');
-      if (more.length !== 1) throw new Error('Cannot uniquely identify the profile actions menu.');
-      // A fresh durable-state / account / profile check precedes every click.
-      main = await guard(request);
-      if (!visible(more[0]) || !main.contains(more[0]) || more[0].dataset.testid !== 'userActions') throw new Error('The profile actions control changed.');
-      more[0].click();
-      const block = await waitFor(() => {
-        const matches = [...document.querySelectorAll('[role="menu"] [data-testid="block"]')].filter(visible);
-        return matches.length === 1 ? matches[0] : null;
-      }, 5000);
-      await guard(request);
-      if (!visible(block) || block.dataset.testid !== 'block' || !block.closest('[role="menu"]')) throw new Error('The block menu changed before it could be used.');
-      actionTriggered = true;
-      block.click();
-      const confirmation = await waitFor(() => {
-        const buttons = [...document.querySelectorAll('[role="dialog"] [data-testid="confirmationSheetConfirm"]')].filter(visible);
-        if (buttons.length !== 1) return null;
-        const dialog = buttons[0].closest('[role="dialog"]');
-        const mentioned = handlesInText(dialog.innerText || dialog.textContent);
-        if (mentioned.length !== 1 || mentioned[0] !== target) throw new Error('The confirmation dialog does not uniquely identify the target account.');
-        return buttons[0];
-      }, 5000);
-      await guard(request);
-      if (!visible(confirmation) || confirmation.dataset.testid !== 'confirmationSheetConfirm') throw new Error('The confirmation control changed.');
-      const dialogHandles = handlesInText(confirmation.closest('[role="dialog"]')?.textContent);
-      if (dialogHandles.length !== 1 || dialogHandles[0] !== target) throw new Error('The confirmation dialog target changed.');
-      confirmation.click();
-      await waitFor(() => {
-        if (identity() !== handle(request.accountHandle)) throw new Error('The signed-in account changed while checking the result.');
-        main = currentProfile(target);
-        return isBlocked(main);
-      }, 12000);
-      // Re-check the pinned ID and durable authorization after the UI changes too.
-      main = await guard(request);
-      if (!isBlocked(main)) throw new Error('The blocked state changed before verification.');
-      return { ok: true, alreadyBlocked: false, id: profileId(main) };
-    } catch (error) {
-      return { ok: false, error: error.message || String(error), uncertain: actionTriggered };
-    } finally { blocking = false; }
-  }
-
-  async function probeProfile(request) {
-    try {
-      await waitFor(() => profileId(currentProfile(handle(request.handle))), 12000);
-      const main = await guard(request);
-      return { ok: true, id: profileId(main) };
-    } catch (error) { return { ok: false, error: error.message || String(error), uncertain: false }; }
-  }
-
-  async function verifyBlock(request) {
-    try {
-      if (typeof request.userId !== 'string' || !/^\d{1,25}$/.test(request.userId)) throw new Error('A pinned numeric ID is required for result verification.');
-      await waitFor(() => {
-        const main = currentProfile(handle(request.handle));
-        return profileId(main) && isBlocked(main);
-      }, 12000);
-      const main = await guard(request);
-      if (profileId(main) !== request.userId || !isBlocked(main)) throw new Error('The reloaded profile does not confirm the block.');
-      return { ok: true, id: request.userId };
-    } catch (error) { return { ok: false, error: error.message || String(error), uncertain: true }; }
   }
 
   function cellHandle(cell) {
@@ -455,18 +315,6 @@
     if (request.type === 'GAB_IDENTITY') {
       readyIdentity().then(accountHandle => respond({ ok: true, accountHandle }))
         .catch(error => respond({ ok: false, error: error.message }));
-      return true;
-    }
-    if (request.type === 'GAB_BLOCK') {
-      nativeBlock(request).then(respond);
-      return true;
-    }
-    if (request.type === 'GAB_PROBE') {
-      probeProfile(request).then(respond);
-      return true;
-    }
-    if (request.type === 'GAB_VERIFY') {
-      verifyBlock(request).then(respond);
       return true;
     }
     if (request.type === 'GAB_CAPTURE') {

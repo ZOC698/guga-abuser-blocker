@@ -18,6 +18,7 @@ let draftWarningShown = false;
 let localConnectionError = '';
 let bindingAccount = false;
 let scrollSaveTimer;
+let cooldownTimer;
 const draftKey = 'gabPopupDraftV1';
 const panelScroll = {};
 const busyActions = new Set();
@@ -105,6 +106,10 @@ function switchPanel(name) {
   if (compact) document.querySelector('.main').scrollTop = panelScroll[name] || 0;
   saveDraft();
 }
+function apiConnected() { return typeof state.settings?.accountId === 'string' && /^\d{1,25}$/.test(state.settings.accountId) && !state.settings.sessionInvalid; }
+function activeCooldown() { const value = state.apiCooldown; return value && Number.isFinite(value.until) && value.until > Date.now() ? value : null; }
+function accountLabel() { const settings = state.settings || {}; return settings.accountHandle ? `@${settings.accountHandle}` : settings.accountId ? `ID ${settings.accountId}` : t('disconnected'); }
+function requireApiReady() { if (!apiConnected()) throw new Error(t('apiReconnectRequired')); if (activeCooldown()) throw new Error(t('apiCooldownWait')); }
 function localEntries() { return (state.entries || []).filter((entry) => entry.source === 'local'); }
 function allowedSet() { return new Set(state.allowlist || []); }
 function activeEntries() { const allowed = allowedSet(); return (state.entries || []).filter((entry) => entry.status === 'approved' && !allowed.has(entry.handle)); }
@@ -124,7 +129,7 @@ function render() {
   setLanguage(state.settings?.language || 'en');
   translatePage();
   $('language').value = state.settings?.language || 'en';
-  renderOverview(); renderLibrary(); renderSubscriptions(); renderActivity(); renderSettings(); renderConnectionStatus();
+  renderOverview(); renderLibrary(); renderSubscriptions(); renderActivity(); renderSettings(); renderConnectionStatus(); renderApiStatus();
   const capture = state.capture || {};
   const details = [t('capturedCount', { count: (capture.entries || []).length })];
   if (capture.status) details.push(t('captureStatus', { status: t(capture.status) }));
@@ -136,36 +141,48 @@ function renderConnectionStatus() {
   const connection = state.lastConnection;
   const error = localConnectionError || (connection?.status === 'failed' ? connection.error || t('connectionFailed') : '');
   const waiting = bindingAccount || connection?.status === 'connecting';
-  $('connection-error').hidden = !error && !waiting;
-  $('connection-error').textContent = error ? `${error} ${t('connectionRetryHelp')}` : waiting ? t('connectionWaiting') : '';
+  const reconnect = !apiConnected() && Boolean(state.settings?.accountId || state.settings?.accountHandle || state.settings?.sessionInvalid);
+  $('connection-error').hidden = !error && !waiting && !reconnect;
+  $('connection-error').textContent = error ? `${error} ${t('connectionRetryHelp')}` : waiting ? t('connectionWaiting') : reconnect ? t('apiReconnectRequired') : '';
+}
+function renderApiStatus() {
+  clearTimeout(cooldownTimer);
+  const cooldown = activeCooldown();
+  $('api-cooldown').hidden = !cooldown;
+  if (!cooldown) { $('api-cooldown').textContent = ''; return; }
+  const kind = ['rate_limit', 'budget', 'auth', 'network'].includes(cooldown.kind) ? cooldown.kind : 'network';
+  $('api-cooldown').textContent = t('apiCooldownNotice', {kind: t(`cooldown_${kind}`), until: dateText(cooldown.until)});
+  cooldownTimer = setTimeout(render, Math.min(60000, Math.max(100, cooldown.until - Date.now() + 50)));
 }
 function renderOverview() {
   const settings = state.settings || {};
   const account = settings.accountHandle;
-  $('account-status').textContent = account ? `@${account}` : t('disconnected');
-  $('account-pill').classList.toggle('connected', Boolean(account));
+  const connected = apiConnected();
+  $('account-status').textContent = connected ? accountLabel() : settings.accountId || account ? `${accountLabel()} · ${t('reconnect')}` : t('disconnected');
+  $('account-pill').classList.toggle('connected', connected);
   const entries = state.entries || [];
   $('nav-count').textContent = new Set(entries.map((e) => e.handle)).size;
   $('stat-approved').textContent = new Set(activeEntries().map((e) => e.handle)).size;
   $('stat-subs').textContent = (state.subscriptions || []).filter((s) => s.enabled !== false).length;
-  const blocked = state.nativeBlocked?.[account];
-  $('stat-done').textContent = blocked ? Object.keys(blocked).length : new Set((state.queue || []).filter((job) => job.status === 'done' && job.accountHandle === account).map((job) => job.handle)).size;
+  const blocked = settings.accountId ? state.nativeBlocked?.[`id:${settings.accountId}`] : null;
+  $('stat-done').textContent = blocked ? Object.keys(blocked).length : new Set((state.queue || []).filter((job) => job.status === 'done' && settings.accountId && job.accountId === settings.accountId).map((job) => job.userId || job.handle)).size;
   $('stat-pending').textContent = localEntries().filter((entry) => entry.status !== 'approved').length;
   const active = (state.queue || []).filter((job) => ['pending', 'running'].includes(job.status));
-  const paused = state.paused && active.length > 0;
-  const mode = paused ? 'Paused' : settings.autoBlock ? 'On' : 'Off';
+  const missingIds = (state.queue || []).filter((job) => job.status === 'needs_id').length;
+  const paused = state.paused && (active.length > 0 || missingIds > 0);
+  const mode = !connected ? 'Off' : paused ? 'Paused' : settings.autoBlock ? 'On' : 'Off';
   $('protection-badge').textContent = t(`protection${mode}`);
   $('protection-title').textContent = t(`protection${mode}Title`);
   $('protection-desc').textContent = t(`protection${mode}Desc`);
-  $('hero-action').textContent = !account ? t('connect') : paused ? t('startQueue') : settings.autoBlock ? t('viewActivity') : t('enableAuto');
-  $('queue-status').textContent = t(state.paused ? 'queuePaused' : active.length ? 'queueRunning' : 'queueIdle');
+  $('hero-action').textContent = !connected ? t(settings.accountId || account ? 'reconnect' : 'connect') : activeCooldown() ? t('viewActivity') : paused ? t('startQueue') : settings.autoBlock ? t('viewActivity') : t('enableAuto');
+  $('queue-status').textContent = t(activeCooldown() ? 'queueCooling' : state.paused ? 'queuePaused' : active.length ? 'queueRunning' : missingIds ? 'needs_id' : 'queueIdle');
   $('queue-remaining').textContent = active.length;
-  $('queue-message').textContent = state.pauseReason || (account ? t('queueHelp') : t('queueNoAccount'));
-  $('queue-start').disabled = !account;
+  $('queue-message').textContent = [state.pauseReason || (connected ? t('queueHelp') : t('queueNoAccount')), missingIds ? t('needsIdSummary', {count: missingIds}) : ''].filter(Boolean).join(' ');
+  $('queue-start').disabled = !connected || !!activeCooldown();
   $('queue-pause').disabled = !!state.paused;
 }
 function sourceName(entry) { return entry.source === 'local' ? t('sourceLocal') : state.subscriptions?.find((sub) => sub.id === entry.source)?.name || t('sourceSubscription'); }
-function badge(status) { return element('span', t(status), `badge ${status}`); }
+function badge(status) { return element('span', t(status), `badge ${status === 'needs_id' ? 'pending' : status}`); }
 function safeLink(url, text, className) {
   try { const parsed = new URL(url); if (!['https:', 'http:'].includes(parsed.protocol)) return null; }
   catch { return null; }
@@ -184,7 +201,7 @@ function renderLibrary() {
     const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.dataset.selectHandle = entry.handle; checkbox.checked = selected.has(entry.handle); checkbox.disabled = entry.source !== 'local'; checkbox.setAttribute('aria-label', entry.source === 'local' ? t('selectAccount', { handle: entry.handle }) : t('readOnlySource')); checkCell.append(checkbox);
     const account = element('td');
     const link = safeLink(`https://x.com/${encodeURIComponent(entry.handle)}`, `@${entry.handle}`, 'account-name'); account.append(link);
-    if (entry.id) account.append(element('span', entry.id, 'account-id'));
+    account.append(element('span', entry.id || t('missingNumericId'), 'account-id'));
     const status = element('td'); status.append(badge(entry.status || 'pending'));
     const reason = element('td'); reason.append(element('span', entry.reason || t('noReason'), 'reason-text'));
     const source = element('span', sourceName(entry), 'source-text');
@@ -229,13 +246,20 @@ function renderActivity() {
   for (const job of [...queue].reverse().slice(0, 200)) {
     const row = element('tr'); const account = element('td'); account.append(safeLink(`https://x.com/${encodeURIComponent(job.handle)}`, `@${job.handle}`, 'account-name'));
     const status = element('td'); status.append(badge(job.status));
-    row.append(account, status, element('td', job.error || '—', 'muted'), element('td', dateText(job.updatedAt), 'muted')); fragment.append(row);
+    const details = element('td', job.error || (job.status === 'needs_id' ? t('needsIdReason') : '—'), 'muted');
+    if (job.status === 'needs_id') {
+      if (localEntries().some((entry) => entry.handle === job.handle)) { const edit = element('button', t('addNumericId'), 'text-button row-source-link'); edit.dataset.editHandle = job.handle; details.append(edit); }
+      else details.append(element('p', t('needsIdSubscriptionHint'), 'footnote'));
+    }
+    row.append(account, status, details, element('td', dateText(job.updatedAt), 'muted')); fragment.append(row);
   }
   $('queue-body').replaceChildren(fragment); $('queue-empty').hidden = queue.length > 0; $('queue-count').textContent = t('entriesCount', { count: queue.length });
-  $('retry-failed').disabled = !queue.some((job) => ['failed', 'uncertain'].includes(job.status));
-  $('activity-start').disabled = !state.settings?.accountHandle;
+  const missingIds = queue.filter((job) => job.status === 'needs_id').length;
+  $('needs-id-notice').hidden = !missingIds; $('needs-id-notice').textContent = t('needsIdSummary', {count: missingIds});
+  $('retry-failed').disabled = !apiConnected() || !!activeCooldown() || !queue.some((job) => ['failed', 'uncertain'].includes(job.status));
+  $('activity-start').disabled = !apiConnected() || !!activeCooldown();
   $('activity-pause').disabled = !!state.paused;
-  $('queue-approved').disabled = !state.settings?.accountHandle;
+  $('queue-approved').disabled = !apiConnected();
   $('pause-notice').hidden = !state.paused || !state.pauseReason; $('pause-notice').textContent = state.pauseReason || '';
   const events = document.createDocumentFragment();
   for (const log of (state.logs || []).slice(0, 100)) {
@@ -246,7 +270,9 @@ function renderActivity() {
 }
 function renderSettings() {
   const settings = state.settings || {};
-  $('bound-account').textContent = settings.accountHandle ? `@${settings.accountHandle}` : t('none');
+  $('bound-account').textContent = apiConnected() ? settings.accountHandle ? `${accountLabel()} · ID ${settings.accountId}` : accountLabel() : settings.accountHandle || settings.accountId ? `${accountLabel()} · ${t('reconnect')}` : t('none');
+  $('bind-account').textContent = t(settings.accountId || settings.accountHandle ? 'reconnect' : 'connect');
+  $('auto-block').disabled = !apiConnected() && !settings.autoBlock;
   $('auto-block').checked = Boolean(settings.autoBlock);
   $('hide-content').checked = settings.hideContent !== false;
   if (!intervalDirty && document.activeElement !== $('interval')) $('interval').value = settings.intervalSeconds || 30;
@@ -274,18 +300,13 @@ async function exportList(kind) {
   const url = URL.createObjectURL(blob);
   const link = element('a'); link.href = url; link.download = result.filename || `guga-blocklist-${kind}.json`; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000); toast(t('downloadReady'));
 }
-async function startQueue() { await request('QUEUE_APPROVED'); await request('START_QUEUE'); toast(t('queueStarted')); }
+async function startQueue() { requireApiReady(); await request('QUEUE_APPROVED'); await request('START_QUEUE'); toast(t('queueStarted')); }
 async function pauseQueue() { await request('PAUSE_QUEUE'); toast(t('queuePausedToast')); }
 async function bindAccount() {
   if (bindingAccount) return;
   bindingAccount = true; localConnectionError = ''; renderConnectionStatus();
-  const payload = {};
   try {
-    if (compact && chrome.tabs?.query) {
-      const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-      if (tab?.id != null && /^https:\/\/(www\.)?(x\.com|twitter\.com)\//.test(tab.url || '')) payload.tabId = tab.id;
-    }
-    const result = await request('BIND_ACCOUNT', payload);
+    const result = await request('BIND_ACCOUNT');
     localConnectionError = '';
     toast(t('bindSuccess', { handle: result.state?.settings?.accountHandle || state.settings?.accountHandle }));
   } catch (error) {
@@ -327,13 +348,14 @@ $('subscription-form').addEventListener('submit', (event) => { event.preventDefa
 }, event.submitter); });
 onClick('sync-now', async () => { await request('SYNC'); toast(t('syncSuccess')); });
 $('subscription-list').addEventListener('click', (event) => { const button = event.target.closest('[data-remove-subscription]'); if (button) action(async () => { await request('REMOVE_SUBSCRIPTION', { id: button.dataset.removeSubscription }); toast(t('subscriptionRemoved')); }, button); });
+$('queue-body').addEventListener('click', (event) => { const edit = event.target.closest('[data-edit-handle]'); if (edit) { switchPanel('library'); $('search').value = edit.dataset.editHandle; $('status-filter').value = 'local'; page = 0; renderLibrary(); editEntry(edit.dataset.editHandle); } });
 onClick('queue-start', startQueue); onClick('activity-start', startQueue); onClick('queue-pause', pauseQueue); onClick('activity-pause', pauseQueue);
 onClick('queue-approved', async () => { await request('QUEUE_APPROVED'); toast(t('queueAdded')); });
-onClick('retry-failed', async () => { await request('RETRY_FAILED'); toast(t('retryQueued')); });
+onClick('retry-failed', async () => { requireApiReady(); await request('RETRY_FAILED'); toast(t('retryQueued')); });
 onClick('bind-account', bindAccount);
-onClick('hero-action', async () => { if (!state.settings?.accountHandle) { await bindAccount(); switchPanel('settings'); } else if (state.paused && state.queue?.some((job) => ['pending','running'].includes(job.status))) await startQueue(); else if (state.settings.autoBlock) switchPanel('activity'); else { await request('SAVE_SETTINGS', { settings: { autoBlock: true } }); toast(t('autoEnabled')); } });
+onClick('hero-action', async () => { if (!apiConnected()) { await bindAccount(); switchPanel('settings'); } else if (activeCooldown()) switchPanel('activity'); else if (state.paused && state.queue?.some((job) => ['pending','running'].includes(job.status))) await startQueue(); else if (state.settings.autoBlock) switchPanel('activity'); else { await request('SAVE_SETTINGS', { settings: { autoBlock: true } }); toast(t('autoEnabled')); } });
 $('language').addEventListener('change', () => action(async () => { await request('SAVE_SETTINGS', { settings: { language: $('language').value } }); }));
-$('auto-block').addEventListener('change', () => action(async () => { const enabled = $('auto-block').checked; await request('SAVE_SETTINGS', { settings: { autoBlock: enabled } }); toast(t(enabled ? 'autoEnabled' : 'autoDisabled')); }));
+$('auto-block').addEventListener('change', () => action(async () => { const enabled = $('auto-block').checked; if (enabled && !apiConnected()) throw new Error(t('apiReconnectRequired')); await request('SAVE_SETTINGS', { settings: { autoBlock: enabled } }); toast(t(enabled ? 'autoEnabled' : 'autoDisabled')); }));
 $('hide-content').addEventListener('change', () => action(async () => { await request('SAVE_SETTINGS', { settings: { hideContent: $('hide-content').checked } }); toast(t('saved')); }));
 onClick('save-interval', async () => { const value = Number($('interval').value); if (!Number.isInteger(value) || value < 30 || value > 300) throw new Error(t('intervalInvalid')); await request('SAVE_SETTINGS', { settings: { intervalSeconds: value } }); intervalDirty = false; toast(t('saved')); });
 $('allow-form').addEventListener('submit', (event) => { event.preventDefault(); action(async () => { await request('ALLOW', { handle: $('allow-handle').value, enabled: true }); $('allow-handle').value = ''; toast(t('saved')); }, event.submitter); });

@@ -87,7 +87,7 @@ export function parseImport(text, {source='local', status='pending', strictPubli
 }
 
 export function initialState() {
-  return {version:1,settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],allowlistPins:{},queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{}};
+  return {version:2,executorVersion:'x-api-v1',settings:{language:'zh',hideContent:true,autoBlock:false,accountHandle:'',accountId:'',sessionInvalid:false,intervalSeconds:30},entries:[],subscriptions:[],allowlist:[],allowlistPins:{},queue:[],logs:[],capture:{entries:[],updatedAt:null},lastSync:null,paused:true,pauseReason:'',workerTabId:null,runId:null,nativeBlocked:{},apiCooldown:null,apiBudget:{accountId:'',writes:[]}};
 }
 
 export function retainAllowlistIdentities(state, nextEntries=state.entries) {
@@ -109,6 +109,7 @@ export function effectiveEntries(state) {
   const allow=new Set(state.allowlist); const active=new Set(state.subscriptions.filter(s=>s.enabled).map(s=>s.id));
   const candidates=state.entries.filter(e=>e.status==='approved'&&(e.source==='local'||active.has(e.source)));
   const excludedIds=new Set(state.entries.filter(e=>e.id&&(allow.has(e.handle)||e.handle===state.settings.accountHandle)).map(e=>e.id));
+  if(state.settings.accountId)excludedIds.add(state.settings.accountId);
   for(const handle of allow) {
     const pins=Object.hasOwn(state.allowlistPins||{},handle)?state.allowlistPins[handle]:[];
     if(Array.isArray(pins))for(const id of pins)if(typeof id==='string'&&/^\d{1,25}$/.test(id))excludedIds.add(id);
@@ -177,7 +178,9 @@ export function identityKey(entry) {
 }
 
 const jobIdentity=job=>identityKey({handle:job.handle,...(job.userId?{id:job.userId}:{})});
-const activeJob=job=>['pending','running','failed','uncertain'].includes(job.status);
+export const accountKey=state=>state.settings.accountId?`id:${state.settings.accountId}`:state.settings.accountHandle;
+export const jobAccountKey=job=>job.accountId?`id:${job.accountId}`:job.accountHandle;
+const activeJob=job=>['pending','needs_id','running','failed','uncertain'].includes(job.status);
 const ownBucket=(state,account)=>Object.hasOwn(state.nativeBlocked||{},account)?state.nativeBlocked[account]:{};
 
 function blockedIdentities(state,account) {
@@ -190,7 +193,7 @@ function blockedIdentities(state,account) {
     }
     if(value&&typeof value==='object'&&typeof value.handle==='string')handles.add(value.handle);
   }
-  for(const job of state.queue)if(job.accountHandle===account&&job.status==='done') {
+  for(const job of state.queue)if(jobAccountKey(job)===account&&job.status==='done') {
     if(job.userId)ids.add(job.userId);
     handles.add(job.handle);
   }
@@ -203,24 +206,35 @@ export function recordBlocked(state,job,responseId) {
   const key=identityKey(target);
   if(job.userId&&id!==job.userId)throw new Error('The confirmed numeric ID differs from the queued account.');
   state.nativeBlocked??={};
-  if(!Object.hasOwn(state.nativeBlocked,job.accountHandle))Object.defineProperty(state.nativeBlocked,job.accountHandle,{value:{},enumerable:true,writable:true,configurable:true});
+  const account=jobAccountKey(job);
+  if(!Object.hasOwn(state.nativeBlocked,account))Object.defineProperty(state.nativeBlocked,account,{value:{},enumerable:true,writable:true,configurable:true});
   const value={at:now(),handle:normalizeHandle(job.handle),...(id?{userId:id}:{})};
-  Object.defineProperty(state.nativeBlocked[job.accountHandle],key,{value,enumerable:true,writable:true,configurable:true});
+  Object.defineProperty(state.nativeBlocked[account],key,{value,enumerable:true,writable:true,configurable:true});
   return key;
 }
 
 export function reconcileQueue(state) {
-  const entries=effectiveEntries(state),account=state.settings.accountHandle;
+  const entries=effectiveEntries(state),account=accountKey(state);
   const byHandle=new Map(entries.map(e=>[e.handle,e]));
   const byId=new Map(entries.filter(e=>e.id).map(e=>[e.id,e]));
   const blocked=blockedIdentities(state,account);
-  const seen=new Set(state.queue.filter(j=>j.status==='running'&&j.accountHandle===account).map(jobIdentity));
-  const seenHandles=new Set(state.queue.filter(j=>j.status==='running'&&j.accountHandle===account).map(j=>j.handle));
-  const priority={uncertain:0,failed:1,pending:2};
-  const queued=state.queue.filter(j=>['pending','failed','uncertain'].includes(j.status)).sort((a,b)=>priority[a.status]-priority[b.status]);
+  const seen=new Set(state.queue.filter(j=>j.status==='running'&&jobAccountKey(j)===account).map(jobIdentity));
+  const seenHandles=new Set(state.queue.filter(j=>j.status==='running'&&jobAccountKey(j)===account).map(j=>j.handle));
+  const priority={uncertain:0,failed:1,pending:2,needs_id:3};
+  const queued=state.queue.filter(j=>['pending','needs_id','failed','uncertain'].includes(j.status)).sort((a,b)=>priority[a.status]-priority[b.status]);
   const skip=(job,message)=>{job.status='skipped';job.error=message;job.updatedAt=now();};
   for(const job of queued) {
-    if(job.accountHandle!==account){skip(job,'No longer eligible');continue;}
+    // An uncertain write belongs forever to the original actor and numeric
+    // target. A new list identity must not erase the outstanding readback.
+    if(job.status==='uncertain'||job.reconcileOnly){
+      if(jobAccountKey(job)===account){
+        const sameIdentity=job.userId&&byId.get(job.userId);
+        if(sameIdentity)job.handle=sameIdentity.handle;
+        seen.add(jobIdentity(job));seenHandles.add(job.handle);
+      }
+      continue;
+    }
+    if(jobAccountKey(job)!==account){skip(job,'No longer eligible');continue;}
     const entry=(job.userId&&byId.get(job.userId))||byHandle.get(job.handle);
     if(!entry){skip(job,'No longer eligible');continue;}
     // Only jobs that cannot be in flight may change identities. Preserve a known
@@ -234,22 +248,26 @@ export function reconcileQueue(state) {
       if(id)job.userId=id;
       job.updatedAt=now();
     }
+    if(state.settings.accountId&&!id&&['pending','needs_id'].includes(job.status))job.status='needs_id';
+    else if(id&&job.status==='needs_id')job.status='pending';
+    job.accountHandle=state.settings.accountHandle;
     seen.add(key);seenHandles.add(entry.handle);
   }
 }
 
 export function retryFailed(state) {
   reconcileQueue(state);let retried=0;
-  for(const job of state.queue)if(['failed','uncertain'].includes(job.status)&&job.accountHandle===state.settings.accountHandle) {
-    job.status='pending';job.error='';job.updatedAt=now();retried++;
+  for(const job of state.queue)if(['failed','uncertain'].includes(job.status)&&jobAccountKey(job)===accountKey(state)) {
+    if(job.status==='uncertain')job.reconcileOnly=true;
+    job.status=state.settings.accountId&&!job.userId?'needs_id':'pending';job.error='';job.updatedAt=now();retried++;
   }
   state.pauseReason='';return {retried};
 }
 
 export function enqueueApproved(state) {
-  const account=state.settings.accountHandle; if(!account) throw new Error('Open X, sign in, then connect your account first.');
+  const account=accountKey(state); if(!account) throw new Error('Open X, sign in, then connect your account first.');
   reconcileQueue(state);
-  const present=state.queue.filter(j=>j.accountHandle===account&&activeJob(j));
+  const present=state.queue.filter(j=>jobAccountKey(j)===account&&activeJob(j));
   const presentIds=new Set(present.filter(j=>j.userId).map(j=>j.userId));
   const presentHandles=new Set(present.map(j=>j.handle));
   const unpinnedRunning=new Set(present.filter(j=>j.status==='running'&&!j.userId).map(j=>j.handle));
@@ -260,7 +278,7 @@ export function enqueueApproved(state) {
   const history=state.queue.filter(j=>!activeJob(j));
   const keep=Math.max(0,MAX_ENTRIES-active.length-additions.length);
   state.queue=[...(keep?history.slice(-keep):[]),...active];
-  for(const e of additions)state.queue.push({id:uid(),handle:e.handle,...(e.id?{userId:e.id}:{}),accountHandle:account,status:'pending',error:'',updatedAt:now()});
+  for(const e of additions)state.queue.push({id:uid(),handle:e.handle,...(e.id?{userId:e.id}:{}),accountHandle:state.settings.accountHandle,...(state.settings.accountId?{accountId:state.settings.accountId}:{}),status:state.settings.accountId&&!e.id?'needs_id':'pending',error:'',updatedAt:now()});
 }
 
 export function publicDocument(state) {

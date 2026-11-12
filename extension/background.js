@@ -1,6 +1,13 @@
-import {SCHEMA,MAX_BYTES,MAX_ENTRIES,now,uid,initialState,normalizeHandle,safeEvidence,parseImport,mergeLocal,effectiveEntries,enqueueApproved,reconcileQueue,recordBlocked,retryFailed,retainAllowlistIdentities,csvExport,subscriptionURL} from './lib/core.js';
+import {SCHEMA,MAX_BYTES,MAX_ENTRIES,now,uid,initialState,normalizeHandle,safeEvidence,parseImport,mergeLocal,effectiveEntries,enqueueApproved,reconcileQueue,recordBlocked,retryFailed,retainAllowlistIdentities,csvExport,subscriptionURL,accountKey,jobAccountKey} from './lib/core.js';
+import {createXApiAdapter, XApiError} from './lib/x-api.js';
+import {createXSessionProvider} from './lib/x-session.js';
 import {prepareStorage,stateBytes,RECOVERY_BUDGET} from './lib/storage-budget.js';
 
+const xSession=createXSessionProvider();
+const xApi=createXApiAdapter({getSession:()=>xSession.getSession(),fetchImpl:(...args)=>fetch(...args)});
+// These are conservative local budgets, not claims about X's server quotas.
+const API_WINDOW=15*60*1000, API_WRITES=30, API_BATCH=10, API_BATCH_PAUSE=2*60*1000;
+const validId=value=>typeof value==='string'&&/^[1-9]\d{0,24}$/.test(value);
 let lock=Promise.resolve();
 let pumping=false;
 let syncing=false;
@@ -14,6 +21,14 @@ function resetInterruptedSession(state) {
 async function readState() {
   const {state}=await chrome.storage.local.get('state');
   const result=state ? {...initialState(),...state,settings:{...initialState().settings,...state.settings}} : initialState();
+  if(state&&state.executorVersion!=='x-api-v1'){
+    result.executorVersion='x-api-v1';result.version=2;
+    result.settings.accountId='';result.settings.sessionInvalid=true;result.settings.autoBlock=false;
+    result.paused=true;result.pauseReason='Reconnect X to verify the API execution account after this update.';
+    result.workerTabId=null;result.runId=null;result.apiCooldown=null;result.apiBudget={accountId:'',writes:[]};
+    for(const job of result.queue)if(job.status==='running'){job.status='uncertain';job.error='The previous page-based operation was interrupted by an extension update.';job.updatedAt=now();}
+    for(const job of result.queue)if(['pending','failed'].includes(job.status)){job.status='skipped';job.error='Legacy page-based job; reconnect and rebuild the API queue.';}
+  }
   if(recoveryRequired){resetInterruptedSession(result);result.paused=true;result.pauseReason='Local data is too large. Export a private backup, then remove unused data to recover.';}
   return result;
 }
@@ -22,11 +37,10 @@ function mutate(fn, {critical=false}={}) {
   lock=result.catch(()=>{});return result;
 }
 function log(state,action,handle='',message='') {state.logs.unshift({at:now(),action,handle,message:String(message).slice(0,500)});state.logs=state.logs.slice(0,1000);}
-const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function schedule(delay=30000) {await chrome.alarms.create('gab-queue',{when:Date.now()+Math.max(30000,delay)});}
 async function setup() {
   if(!await chrome.alarms.get('gab-sync')) await chrome.alarms.create('gab-sync',{periodInMinutes:360});
-  // A periodic watchdog survives a worker dying between a native click and recording its result.
+  // A periodic watchdog detects interrupted API writes without replaying them.
   if(!await chrome.alarms.get('gab-watchdog')) await chrome.alarms.create('gab-watchdog',{periodInMinutes:1});
 }
 // A session marker survives MV3 worker suspension, but never browser restart.
@@ -40,6 +54,7 @@ async function initializeSession() {
     // Legacy oversized state remains exportable; never activate a stale worker tab.
     await chrome.storage.session.set({gabSession:gabSession||uid(),gabRecovery:recoveryRequired});
   }
+  await mutate(()=>{}, {critical:true}).catch(error=>{if(error.code!=='STORAGE_BUDGET')throw error;});
   await setup();
 }
 const ready=initializeSession();
@@ -67,28 +82,6 @@ async function recentXTab(path) {
 }
 async function toTab(tabId,message) {
   try {return await chrome.tabs.sendMessage(tabId,message,{frameId:0});}catch(error){throw new Error(`X page did not respond. Refresh that X tab and try again. ${String(error.message).slice(0,180)}`);}
-}
-
-async function readTabIdentity(tabId) {
-  const read=async()=>{
-    await checkedXTab(tabId);
-    let timer;
-    try{return await Promise.race([
-      chrome.tabs.sendMessage(tabId,{type:'GAB_IDENTITY'},{frameId:0}),
-      new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('The selected X tab did not respond in time. Activate that tab and try again.')),10000);})
-    ]);}finally{clearTimeout(timer);}
-  };
-  try{return await read();}
-  catch(error){
-    // Only a missing receiver permits recovery. Never transparently replay a
-    // native write or a message whose reply may have been lost after execution.
-    if(!/Receiving end does not exist\.?/i.test(String(error.message)))throw error;
-    await checkedXTab(tabId);
-    await chrome.scripting.executeScript({target:{tabId,frameIds:[0]},world:'ISOLATED',files:['content.js']});
-    await checkedXTab(tabId);
-    await chrome.scripting.insertCSS({target:{tabId,frameIds:[0]},files:['content.css']});
-    return read();
-  }
 }
 
 async function fetchSubscription(url) {
@@ -126,77 +119,112 @@ async function syncAll() {
   await pump();
 }
 
-async function waitForTab(tabId) {
-  for(let i=0;i<25;i++){await sleep(600);const fresh=await chrome.tabs.get(tabId);if(fresh.status==='complete'){await sleep(800);return fresh;}}
-  throw new Error('X profile page timed out.');
+function requireApiAccount(state) {
+  if(!validId(state.settings.accountId)||state.settings.sessionInvalid)throw new Error('Reconnect X to verify your current API execution account.');
 }
-async function getWorkerTab(state,handle) {
-  const url=`https://x.com/${encodeURIComponent(handle)}`;let tab;
-  if(state.workerTabId!=null){try{tab=await chrome.tabs.get(state.workerTabId);}catch{}}
-  if(tab){const prior=new URL(tab.url??'about:blank');if(tab.incognito||!['x.com','twitter.com'].includes(prior.hostname))throw new Error('Worker tab was used for another context. Pause, close it, and start again.');tab=await chrome.tabs.update(tab.id,{url});}
-  else {tab=await chrome.tabs.create({url:'about:blank',active:false});await mutate(s=>{s.workerTabId=tab.id;},{critical:true});tab=await chrome.tabs.update(tab.id,{url});}
-  return waitForTab(tab.id);
+function requireNoCooldown(state) {
+  if(Number(state.apiCooldown?.until)>Date.now())throw new Error('X requests are cooling down. Wait until the displayed time before trying again.');
+}
+function budgetWrites(state) {
+  state.apiBudgets??={};
+  const accountId=state.settings.accountId;
+  if(!Object.hasOwn(state.apiBudgets,accountId))state.apiBudgets[accountId]={accountId,writes:state.apiBudget?.accountId===accountId?state.apiBudget.writes:[]};
+  state.apiBudget=state.apiBudgets[accountId];
+  const timestamp=Date.now();
+  state.apiBudget.writes=(state.apiBudget.writes||[]).filter(at=>Number.isFinite(at)&&at>timestamp-API_WINDOW&&at<=timestamp);
+  return state.apiBudget.writes;
+}
+function guardJob(state,picked,{readOnly=false}={}) {
+  requireApiAccount(state);
+  const job=state.queue.find(j=>j.id===picked.job.id);
+  const entry=effectiveEntries(state).find(e=>e.id===picked.job.userId);
+  if(state.paused||state.runId!==picked.runId||!job||job.status!=='running'||job.accountId!==state.settings.accountId||job.userId!==picked.job.userId||(!entry&&!(readOnly&&job.reconcileOnly))||!validId(job.userId))throw new Error('The API queue, account or approved target changed.');
+  return job;
+}
+function errorText(error){return error instanceof XApiError?error.message:String(error?.message||'The operation failed.').slice(0,300);}
+function noteCooldown(state,kind,until){
+  const timestamp=Date.now();
+  const deadline=Number.isFinite(until)&&until>timestamp?until:timestamp+15*60*1000;
+  state.apiCooldown={kind,until:Math.max(deadline,Number(state.apiCooldown?.until)||0)};
 }
 async function pump() {
   await ready;
-  if(recoveryRequired)return;
-  if(pumping)return;pumping=true;
-  let picked;
+  if(recoveryRequired||pumping)return;pumping=true;
+  let picked,writeStarted=false,writeConfirmed=false;
   try {
     const chosen=await mutate(state=>{
       const active=state.queue.find(j=>j.status==='running');
-      if(active){if(!Number.isFinite(Date.parse(active.updatedAt))||Date.now()-Date.parse(active.updatedAt)>120000){active.status='uncertain';active.error='Previous operation was interrupted; inspect X before retrying.';state.paused=true;state.pauseReason=active.error;log(state,'interrupted',active.handle,active.error);}return;}
-      if(state.paused||!state.settings.accountHandle)return;
+      if(active){if(!Number.isFinite(Date.parse(active.updatedAt))||Date.now()-Date.parse(active.updatedAt)>120000){active.status='uncertain';active.error='Previous API operation was interrupted. Retry performs a relationship read before any new write.';state.paused=true;state.pauseReason=active.error;log(state,'interrupted',active.handle,active.error);}return;}
+      if(state.paused||!validId(state.settings.accountId)||state.settings.sessionInvalid)return;
       reconcileQueue(state);
-      const last=Date.parse(state.lastAttemptAt??'')||0;const wait=Math.max(30000,state.settings.intervalSeconds*1000)-(Date.now()-last);
+      const cooldown=Number(state.apiCooldown?.until)||0;
+      if(cooldown>Date.now())return {wait:cooldown-Date.now()};
+      state.apiCooldown=null;
+      const writes=budgetWrites(state);
+      if(writes.length>=API_WRITES){noteCooldown(state,'budget',writes[0]+API_WINDOW);return {wait:state.apiCooldown.until-Date.now()};}
+      const last=Date.parse(state.lastAttemptAt??'')||0;
+      const wait=Math.max(30000,state.settings.intervalSeconds*1000)-(Date.now()-last);
       if(wait>0)return {wait};
-      const job=state.queue.find(j=>j.status==='pending');if(!job)return;
+      const job=state.queue.find(j=>j.status==='pending'&&j.accountId===state.settings.accountId);if(!job)return;
+      if(!validId(job.userId)){job.status='needs_id';return;}
       if(stateBytes(state)>RECOVERY_BUDGET-65536)throw new Error('Storage is nearly full. Export a backup and remove unused data before continuing.');
       state.runId=uid();state.lastAttemptAt=now();job.status='running';job.updatedAt=now();return {job:{...job},runId:state.runId};
     },{critical:true});
     if(chosen.wait){await schedule(chosen.wait);return;}
     if(!chosen.job)return;picked=chosen;
     await schedule(90000);
-    const tab=await getWorkerTab(chosen.state,chosen.job.handle);
-    const current=await readState();if(current.paused||current.runId!==chosen.runId)throw new Error('Queue paused before operation.');
-    const request={handle:chosen.job.handle,userId:chosen.job.userId,accountHandle:chosen.job.accountHandle,jobId:chosen.job.id,runId:chosen.runId};
-    const probe=await toTab(tab.id,{type:'GAB_PROBE',...request});
-    if(!probe?.ok||typeof probe.id!=='string'||!/^\d{1,25}$/.test(probe.id)||(request.userId&&request.userId!==probe.id))throw new Error(probe?.error||'Cannot pin the target numeric ID before blocking.');
-    // Persist identity before any native click. A crash must not turn a retry
-    // into a fresh handle lookup for a possibly different account holder.
-    await mutate(state=>{
-      const job=state.queue.find(j=>j.id===chosen.job.id);
-      const eligible=effectiveEntries(state).find(e=>e.id===probe.id||(!e.id&&e.handle===request.handle));
-      if(state.paused||state.runId!==chosen.runId||!job||job.status!=='running'||!eligible||(job.userId&&job.userId!==probe.id))throw new Error('Queue or target identity changed before the block.');
-      job.userId=probe.id;
-      for(const e of state.entries)if(e.source==='local'&&e.handle===job.handle&&!e.id)e.id=probe.id;
-    },{critical:true});
-    request.userId=probe.id;chosen.job.userId=probe.id;
-    let response=await toTab(tab.id,{type:'GAB_BLOCK',...request});
-    if(response?.ok){
-      if(typeof response.id!=='string'||!/^\d{1,25}$/.test(response.id)||(chosen.job.userId&&response.id!==chosen.job.userId))throw new Error('X returned an unverified target ID.');
-      const observed=response;
-      await chrome.tabs.reload(tab.id,{bypassCache:true});await waitForTab(tab.id);
-      const verified=await toTab(tab.id,{type:'GAB_VERIFY',...request,userId:observed.id});
-      if(!verified?.ok||verified.id!==observed.id)throw new Error(verified?.error||'The block result did not survive a page reload.');
-      response={...verified,alreadyBlocked:observed.alreadyBlocked};
+    guardJob(await readState(),picked,{readOnly:true});
+    const options={expectedAccountId:picked.job.accountId};
+    // Every attempt, including an uncertain retry, reads the relationship first.
+    let relationship=await xApi.readRelationship(picked.job.userId,options);
+    guardJob(await readState(),picked,{readOnly:true});
+    const alreadyBlocked=relationship.blocking;
+    if(picked.job.reconcileOnly&&!alreadyBlocked){
+      const reconciled=await mutate(state=>{
+        const job=guardJob(state,picked,{readOnly:true});
+        if(!effectiveEntries(state).some(e=>e.id===job.userId)){
+          job.status='skipped';job.error='The previous write is not present and this numeric target is no longer approved.';job.updatedAt=now();delete job.reconcileOnly;return {retired:true};
+        }
+      },{critical:true});
+      if(reconciled.retired)return;
+    }
+    if(!alreadyBlocked){
+      await xApi.blockUser(picked.job.userId,{...options,beforeWrite:async()=>{
+        await mutate(state=>{
+          const job=guardJob(state,picked);requireNoCooldown(state);
+          const writes=budgetWrites(state);if(writes.length>=API_WRITES)throw new Error('The local operation budget is exhausted.');
+          writes.push(Date.now());job.writeAttemptAt=now();
+        },{critical:true});
+        writeStarted=true;
+      },beforeDispatch:async()=>{const state=await readState();guardJob(state,picked);requireNoCooldown(state);}});
+      writeConfirmed=true;
+      // Do not accept an optimistic response without an independent readback.
+      relationship=await xApi.readRelationship(picked.job.userId,options);
+      if(!relationship.blocking)throw new XApiError('X did not confirm the block relationship after the write.',{kind:'response',uncertain:true});
     }
     await mutate(state=>{
-      const job=state.queue.find(j=>j.id===chosen.job.id);if(!job||job.status!=='running'||state.runId!==chosen.runId)return;
-      job.updatedAt=now();
-      if(response?.ok){
-        const eligible=effectiveEntries(state).find(e=>e.id===response.id||(!e.id&&e.handle===job.handle));
-        if(state.paused||!eligible||(eligible.id&&eligible.id!==response.id))throw new Error('Eligibility or target identity changed before recording the result.');
-        recordBlocked(state,job,response.id);job.userId=response.id;job.status='done';job.error='';
-        for(const e of state.entries)if(e.source==='local'&&e.handle===job.handle&&!e.id)e.id=response.id;
-        log(state,response.alreadyBlocked?'already-blocked':'blocked',job.handle);}
-      else{job.status=response?.uncertain?'uncertain':'failed';job.error=response?.error||'No verified response from X.';state.paused=true;state.pauseReason=job.error;log(state,'block-error',job.handle,job.error);}
+      const job=guardJob(state,picked,{readOnly:alreadyBlocked});
+      if(relationship.accountId!==job.accountId||relationship.targetId!==job.userId||!relationship.blocking)throw new Error('X returned an unverified block relationship.');
+      recordBlocked(state,job,job.userId);job.status='done';job.error='';job.updatedAt=now();delete job.reconcileOnly;
+      if(writeStarted&&budgetWrites(state).length%API_BATCH===0)noteCooldown(state,'budget',Date.now()+API_BATCH_PAUSE);
+      log(state,alreadyBlocked?'already-blocked':'blocked',job.handle);
     },{critical:true});
-  }catch(err){await mutate(state=>{
-    if(picked){const job=state.queue.find(j=>j.id===picked.job.id);if(job&&job.status==='running'){job.status='uncertain';job.error=err.message;job.updatedAt=now();}}
-    state.paused=true;state.pauseReason=err.message;log(state,'block-error',picked?.job.handle||'',err.message);
+  }catch(error){await mutate(state=>{
+    const job=picked&&state.queue.find(j=>j.id===picked.job.id);
+    const message=errorText(error);
+    const uncertain=!!picked?.job.reconcileOnly||writeConfirmed||!!error.uncertain||(writeStarted&&!['auth','rate_limit','request','target_unavailable','target_suspended','cancelled'].includes(error.kind));
+    if(job&&job.status==='running'){
+      job.status=uncertain?'uncertain':'failed';job.error=message;job.updatedAt=now();
+      if(error.kind==='rate_limit'&&!uncertain){job.status='pending';noteCooldown(state,'rate_limit',error.retryAt);}
+      if(['target_unavailable','target_suspended'].includes(error.kind)&&!uncertain)job.status='skipped';
+    }
+    if(error.kind==='rate_limit')noteCooldown(state,'rate_limit',error.retryAt);
+    if(!(error.kind==='rate_limit'&&!uncertain)&&(!['target_unavailable','target_suspended'].includes(error.kind)||uncertain)){state.paused=true;state.pauseReason=message;}
+    if(['auth','account_changed'].includes(error.kind)){state.settings.sessionInvalid=true;state.settings.autoBlock=false;noteCooldown(state,'auth',Date.now()+60000);state.paused=true;}
+    else if(['network','timeout','server'].includes(error.kind))noteCooldown(state,'network',Date.now()+60000);
+    log(state,'block-error',picked?.job.handle||'',message);
   },{critical:true});}
-  finally{pumping=false;const s=await readState();if(!s.paused&&s.queue.some(j=>j.status==='pending'))await schedule(Math.max(30,s.settings.intervalSeconds)*1000);}
+  finally{pumping=false;const state=await readState();if(!state.paused&&state.queue.some(j=>j.status==='pending'&&j.accountId===state.settings.accountId))await schedule(Math.max(30000,state.settings.intervalSeconds*1000,(state.apiCooldown?.until||0)-Date.now()));}
 }
 
 async function handle(message,sender) {
@@ -214,8 +242,8 @@ async function handle(message,sender) {
     case 'GET_STATE':return {state:await readState()};
     case 'SAVE_SETTINGS':return mutate(state=>{
       const x=message.settings??{};const enabling=x.autoBlock===true&&!state.settings.autoBlock;
-      if(enabling&&!state.settings.accountHandle)throw new Error('Connect your X account first.');
-      if(enabling&&state.queue.some(j=>j.accountHandle===state.settings.accountHandle&&['failed','uncertain'].includes(j.status)))throw new Error('Review failed / uncertain items and use Retry before enabling automatic blocking.');
+      if(enabling){requireApiAccount(state);requireNoCooldown(state);}
+      if(enabling&&state.queue.some(j=>jobAccountKey(j)===accountKey(state)&&['failed','uncertain'].includes(j.status)))throw new Error('Review failed / uncertain items and use Retry before enabling automatic blocking.');
       if(x.language!=null){if(!['zh','ja','en'].includes(x.language))throw new Error('Invalid language');state.settings.language=x.language;}
       if(x.hideContent!=null)state.settings.hideContent=!!x.hideContent;
       if(x.intervalSeconds!=null){const n=Number(x.intervalSeconds);if(!Number.isFinite(n))throw new Error('Invalid interval');state.settings.intervalSeconds=Math.max(30,Math.min(300,n));}
@@ -224,27 +252,26 @@ async function handle(message,sender) {
     case 'BIND_ACCOUNT':{
       const requestId=uid();
       await mutate(state=>{
+        requireNoCooldown(state);
         if(state.queue.some(j=>j.status==='running'))throw new Error('Pause the queue and wait for the current operation before reconnecting.');
         state.settings.autoBlock=false;state.paused=true;state.pauseReason='Connecting X account';
-        state.lastConnection={requestId,status:'connecting',tabId:Number.isInteger(message.tabId)?message.tabId:null,at:now(),error:''};
+        state.lastConnection={requestId,status:'connecting',at:now(),error:''};
       });
       try{
-        const tab=Object.hasOwn(message,'tabId')?await checkedXTab(message.tabId):await recentXTab();
-        await mutate(state=>{if(state.lastConnection?.requestId!==requestId)throw new Error('A newer connection request replaced this one.');state.lastConnection.tabId=tab.id;});
-        const result=await readTabIdentity(tab.id);
-        if(!result?.ok)throw new Error(result?.error||'Cannot identify the signed-in X account.');
-        const account=normalizeHandle(result.accountHandle);
-        // A navigation during the identity request cannot select a different site.
-        await checkedXTab(tab.id);
+        const identity=await xApi.verifyAccount();
+        if(!validId(identity.accountId))throw new Error('X did not verify a numeric execution account.');
+        const account=normalizeHandle(identity.handle);
         return await mutate(state=>{
           if(state.lastConnection?.requestId!==requestId)throw new Error('A newer connection request replaced this one.');
-          if(state.queue.some(j=>j.status==='running'))throw new Error('The queue started while connecting. Pause it before reconnecting.');
-          state.settings.accountHandle=account;state.settings.autoBlock=false;state.paused=true;state.pauseReason='';
+          if(state.queue.some(j=>j.status==='running'))throw new Error('Pause the current operation before reconnecting.');
+          state.settings.accountHandle=account;state.settings.accountId=identity.accountId;state.settings.sessionInvalid=false;
+          state.settings.autoBlock=false;state.paused=true;state.pauseReason='';
           state.lastConnection={...state.lastConnection,status:'connected',at:now(),error:''};
-          reconcileQueue(state);log(state,'account-connected',account);
+          // Reconnecting cannot erase a persisted budget or rate-limit deadline.
+          budgetWrites(state);reconcileQueue(state);log(state,'account-connected',account);
         });
       }catch(error){
-        await mutate(state=>{if(state.lastConnection?.requestId===requestId){state.lastConnection={...state.lastConnection,status:'failed',at:now(),error:String(error.message??error).slice(0,500)};state.paused=true;state.settings.autoBlock=false;state.pauseReason=state.lastConnection.error;}});
+        await mutate(state=>{if(state.lastConnection?.requestId===requestId){state.lastConnection={...state.lastConnection,status:'failed',at:now(),error:errorText(error)};state.paused=true;state.settings.autoBlock=false;state.settings.sessionInvalid=true;state.pauseReason=state.lastConnection.error;if(error.kind==='rate_limit')noteCooldown(state,'rate_limit',error.retryAt);else if(['auth','account_changed'].includes(error.kind))noteCooldown(state,'auth',Date.now()+60000);}});
         throw error;
       }
     }
@@ -270,10 +297,10 @@ async function handle(message,sender) {
     }
     case 'SYNC':await syncAll();return {state:await readState()};
     case 'REMOVE_SUBSCRIPTION':return mutate(state=>{state.subscriptions=state.subscriptions.filter(s=>s.id!==message.id);state.entries=state.entries.filter(e=>e.source!==message.id);reconcileQueue(state);});
-    case 'QUEUE_APPROVED':return mutate(state=>{enqueueApproved(state);});
-    case 'START_QUEUE':{const result=await mutate(state=>{enqueueApproved(state);if(state.queue.some(j=>['uncertain','failed'].includes(j.status)))throw new Error('Review failed / uncertain items and use Retry before continuing.');state.paused=false;state.pauseReason='';});void pump();return result;}
+    case 'QUEUE_APPROVED':return mutate(state=>{requireApiAccount(state);enqueueApproved(state);});
+    case 'START_QUEUE':{const result=await mutate(state=>{requireApiAccount(state);requireNoCooldown(state);enqueueApproved(state);if(state.queue.some(j=>jobAccountKey(j)===accountKey(state)&&['uncertain','failed'].includes(j.status)))throw new Error('Review failed / uncertain items and use Retry before continuing.');state.paused=false;state.pauseReason='';});void pump();return result;}
     case 'PAUSE_QUEUE':return mutate(state=>{state.paused=true;state.pauseReason='Paused by you';log(state,'paused');},{critical:true});
-    case 'RETRY_FAILED':return mutate(state=>{retryFailed(state);state.pauseReason='';});
+    case 'RETRY_FAILED':return mutate(state=>{requireApiAccount(state);requireNoCooldown(state);retryFailed(state);state.pauseReason='';});
     case 'CAPTURE':{const tab=await recentXTab('/settings/blocked');const identity=await toTab(tab.id,{type:'GAB_IDENTITY'});if(!identity?.ok)throw new Error(identity?.error||'Cannot identify capture account.');const captureId=uid();const accountHandle=normalizeHandle(identity.accountHandle);
       await mutate(state=>{if(state.capture.status==='scanning')throw new Error('Stop the current capture first.');state.capture={entries:[],updatedAt:now(),status:'scanning',captureId,accountHandle,tabId:tab.id};});
       try{const result=await toTab(tab.id,{type:'GAB_CAPTURE',autoScroll:!!message.autoScroll,captureId,accountHandle});if(!result?.ok)throw new Error(result?.error||'Capture failed.');}catch(error){await mutate(s=>{if(s.capture.captureId===captureId)s.capture.status='stopped';});throw error;}return {state:await readState()};}
@@ -294,4 +321,13 @@ async function handle(message,sender) {
 }
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{const reply=value=>{try{respond(value);}catch{/* A closed popup must not undo a persisted result. */}};handle(message,sender).then(result=>reply({ok:true,...result})).catch(err=>reply({ok:false,error:String(err.message??err)}));return true;});
 chrome.alarms.onAlarm.addListener(alarm=>ready.then(()=>{if(alarm.name==='gab-sync')return syncAll();if(['gab-queue','gab-watchdog'].includes(alarm.name))return pump();}));
-chrome.tabs.onRemoved.addListener(tabId=>{void ready.then(()=>mutate(state=>{if(state.workerTabId===tabId){state.workerTabId=null;if(state.queue.some(j=>j.status==='running')){state.paused=true;state.pauseReason='Worker tab was closed.';}}},{critical:true}));});
+chrome.cookies?.onChanged?.addListener(change=>{
+  if(!['twid','ct0'].includes(change.cookie?.name)||!['x.com','.x.com'].includes(change.cookie?.domain))return;
+  void ready.then(async()=>{
+    let current;try{current=await xSession.getSession();}catch{}
+    await mutate(state=>{
+      if(!state.settings.accountId)return;
+      if(!current||current.accountId!==state.settings.accountId){state.settings.sessionInvalid=true;state.settings.autoBlock=false;state.paused=true;state.pauseReason='The X browser session changed. Reconnect before continuing.';}
+    },{critical:true});
+  }).catch(()=>{});
+});

@@ -8,26 +8,36 @@ try{pw=require(process.env.PLAYWRIGHT_MODULE||'playwright');}catch{}
 const project=path.resolve(import.meta.dirname,'..');
 const outputs=path.resolve(project,'..');
 
-function fixture(url, blocked=false) {
-  const handle=new URL(url).pathname.slice(1)||'home';
-  return `<!doctype html><html><body><nav><a data-testid="AppTabBar_Profile_Link" href="/fixture_owner">Profile</a></nav><button data-testid="SideNav_AccountSwitcher_Button" aria-label="Account menu"><div data-testid="UserAvatar-Container-fixture_owner"><img alt="Owner @unrelated_display" width="30" height="30"></div></button><main><div data-testid="primaryColumn"><div data-testid="UserName">Fixture<br>@${handle}</div><button data-testid="userActions">More</button><button id="target" data-testid="1234567890123456789-${blocked?'unblock':'follow'}">Follow</button></div></main><script>
-  document.querySelector('[data-testid="userActions"]').onclick=()=>{
-    const menu=document.createElement('div');menu.setAttribute('role','menu');
-    const button=document.createElement('button');button.dataset.testid='block';button.textContent='Block @${handle}';menu.append(button);document.body.append(menu);
-    button.onclick=()=>{menu.remove();const dialog=document.createElement('div');dialog.setAttribute('role','dialog');dialog.textContent='Block @${handle}?';const confirm=document.createElement('button');confirm.dataset.testid='confirmationSheetConfirm';confirm.textContent='Block';dialog.append(confirm);document.body.append(dialog);confirm.onclick=async()=>{await fetch('/__fixture/block?handle=${handle}',{method:'POST'});document.querySelector('#target').dataset.testid='1234567890123456789-unblock';document.querySelector('#target').textContent='Blocked';dialog.remove();};};
-  };</script></body></html>`;
-}
-
-test('real unpacked MV3 extension: import, review, locales, export, account-bound queue and popup', {skip:!pw&&'Set PLAYWRIGHT_MODULE or install playwright.'},async()=>{
+test('real unpacked MV3 extension: import, review, locales, export, account-bound queue and popup', {skip:!pw&&'Set PLAYWRIGHT_MODULE or install playwright.'},async(t)=>{
   const work=path.resolve(project,'../../work');await fs.mkdir(work,{recursive:true});const profile=await fs.mkdtemp(path.join(work,'test-browser-'));
   const extension=path.join(project,'extension');
   const context=await pw.chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,...(process.env.GAB_CHROMIUM_PATH?{executablePath:process.env.GAB_CHROMIUM_PATH}:{}),args:[`--disable-extensions-except=${extension}`,`--load-extension=${extension}`,'--host-resolver-rules=MAP x.com ~NOTFOUND, MAP twitter.com ~NOTFOUND'],viewport:{width:1360,height:1000}});
-  let remoteRequests=0, blockRequests=0, targetNavigations=0;const blockedHandles=new Set();
-  await context.route('https://**/*',async route=>{const url=new URL(route.request().url());if(url.origin==='https://x.com'){
-    if(url.pathname==='/__fixture/block'){assert.equal(route.request().method(),'POST');blockedHandles.add(url.searchParams.get('handle'));blockRequests++;return route.fulfill({json:{ok:true}});}
-    if(url.pathname==='/fixture_target')targetNavigations++;
-    return route.fulfill({contentType:'text/html',body:fixture(url.href,blockedHandles.has(url.pathname.slice(1)))});
-  }remoteRequests++;return route.abort();});
+  t.after(()=>context.close());
+  let remoteRequests=0, blockRequests=0, relationshipReads=0, pageNavigations=0;let blocking=false;const accountId='9876543210987654321',targetId='1234567890123456789',csrf='a'.repeat(64);
+  const expires=Math.floor(Date.now()/1000)+3600;
+  await context.addCookies([{name:'twid',value:`u%3D${accountId}`,domain:'.x.com',path:'/',secure:true,sameSite:'Lax',expires},{name:'ct0',value:csrf,domain:'.x.com',path:'/',secure:true,sameSite:'Lax',expires},{name:'auth_token',value:'synthetic-isolated-cookie',domain:'.x.com',path:'/',secure:true,httpOnly:true,sameSite:'Lax',expires}]);
+  await context.route('https://**/*',async route=>{
+    const request=route.request(),url=new URL(request.url());
+    if(url.origin==='https://x.com'&&url.pathname.startsWith('/i/api/1.1/')){
+      const headers=await request.allHeaders();
+      assert.equal(headers['x-csrf-token'],csrf);
+      // Routing intercepts before Chromium attaches Cookie. A separate loopback
+      // transport test observes cookies at the server; do not infer that here.
+      assert.ok(request.serviceWorker(),'API calls must originate in the extension worker');
+      if(url.pathname.endsWith('/account/settings.json'))return route.fulfill({json:{screen_name:'fixture_owner'}});
+      if(url.pathname.endsWith('/users/show.json')){
+        if(url.searchParams.get('screen_name')==='fixture_owner')return route.fulfill({json:{id_str:accountId,screen_name:'fixture_owner'}});
+        assert.equal(url.searchParams.get('user_id'),targetId);relationshipReads++;
+        return route.fulfill({json:{id_str:targetId,screen_name:'fixture_target',blocking}});
+      }
+      if(url.pathname.endsWith('/blocks/create.json')){
+        assert.equal(request.method(),'POST');assert.equal(request.postData(),'user_id='+targetId);blocking=true;blockRequests++;
+        return route.fulfill({json:{id_str:targetId,screen_name:'fixture_target',blocking:true}});
+      }
+    }
+    if(url.origin==='https://x.com')pageNavigations++;
+    remoteRequests++;return route.abort();
+  });
   const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   try {
     const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
@@ -51,13 +61,13 @@ test('real unpacked MV3 extension: import, review, locales, export, account-boun
     await page.locator('[data-edit-handle="fixture_target"]').click();await page.locator('#edit-id').fill('1234567890123456789');await page.locator('#entry-form button[type="submit"]').click();
     state=(await send('GET_STATE')).state;assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');
     const downloadEvent=page.waitForEvent('download');await page.locator('#export-kind').selectOption('private');await page.locator('#export-list').click();const download=await downloadEvent;assert.equal(download.suggestedFilename(),'guga-private-backup.json');
-    const x=await context.newPage();await x.goto('https://x.com/home');await x.waitForFunction(()=>!!document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]'));
-    await page.bringToFront();await page.locator('[data-panel="settings"]').click();await page.locator('#bind-account').click();await page.waitForFunction(()=>document.querySelector('#bound-account').textContent.includes('fixture_owner'));
-    // Exercise the production tab creation path. No fixture-written workerTabId.
-    await page.bringToFront();
+    await page.bringToFront();await page.locator('[data-panel="settings"]').click();await page.locator('#bind-account').click();
+    await page.waitForFunction(()=>document.querySelector('#bound-account').textContent.includes('fixture_owner'));
+    assert.equal((await send('GET_STATE')).state.settings.accountId,accountId);
+    const beforeQueuePages=context.pages().length;
     await page.locator('#auto-block').check();await page.locator('[data-panel="overview"]').click();await page.locator('#queue-start').click();
     for(let i=0;i<100;i++){state=(await send('GET_STATE')).state;const job=state.queue.find(j=>j.handle==='fixture_target');if(['done','failed','uncertain'].includes(job?.status))break;await new Promise(resolve=>setTimeout(resolve,250));}
-    assert.equal(state.queue.find(j=>j.handle==='fixture_target')?.status,'done',JSON.stringify(state.queue));assert.ok(state.nativeBlocked.fixture_owner['id:1234567890123456789']);assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');assert.equal(state.queue.length,1);assert.equal(blockRequests,1);assert.ok(targetNavigations>=2,'Result must be rechecked after a real navigation');
+    assert.equal(state.queue.find(j=>j.handle==='fixture_target')?.status,'done',JSON.stringify(state.queue));assert.ok(state.nativeBlocked['id:'+accountId]['id:1234567890123456789']);assert.equal(state.entries.find(e=>e.handle==='fixture_target').id,'1234567890123456789');assert.equal(state.queue.length,1);assert.equal(blockRequests,1);assert.equal(relationshipReads,2,'Preflight and independent API readback are required');assert.equal(context.pages().length,beforeQueuePages,'API execution must not create a worker tab');assert.equal(pageNavigations,0);
     await page.locator('#queue-pause').click();await page.reload();assert.equal((await send('GET_STATE')).state.paused,true);
     await page.setViewportSize({width:800,height:900});await page.locator('[data-panel="settings"]').click();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     const pageCount=context.pages().length;
@@ -86,9 +96,9 @@ test('real unpacked MV3 extension: import, review, locales, export, account-boun
     await page.locator('[data-panel="subscriptions"]').click();await page.locator('#sub-name').fill('Draft subscription');await page.locator('#sub-url').fill('https://raw.githubusercontent.com/fixture/repo/main/list.json');
     await page.waitForFunction(async()=>JSON.stringify(await chrome.storage.session.get(null)).includes('Draft subscription'));
     await page.reload();await page.waitForFunction(()=>document.querySelector('#sub-name')?.value==='Draft subscription');assert.equal(await page.locator('#panel-subscriptions').isVisible(),true);
-    await page.locator('[data-panel="settings"]').click();await page.screenshot({path:path.join(outputs,'guga-popup-0.1.2-fixture.png')});
+    await page.locator('[data-panel="settings"]').click();await page.screenshot({path:path.join(outputs,'guga-popup-0.2.0-fixture.png')});
     assert.equal(context.pages().length,pageCount,'Management must not open another tab/window');
     assert.deepEqual(errors,[]);assert.equal(remoteRequests,0);
-    await fs.writeFile(path.join(outputs,'integration-result.json'),JSON.stringify({passed:true,version:'0.1.2',syntheticEntries:523,locales:['zh','en','ja'],nativeBlock:'simulated X DOM; no live account actions',realExtensionLoaded:true,productionWorkerCreation:true,reloadedResult:true,popupManagement:true,popupDraftRecovery:true,blockRequests,pageErrors:errors,unexpectedRemoteRequests:remoteRequests},null,2));
+    await fs.writeFile(path.join(outputs,'integration-result.json'),JSON.stringify({passed:true,version:'0.2.0',syntheticEntries:523,locales:['zh','en','ja'],nativeBlock:'production API executor with intercepted X responses and synthetic cookies; no live account actions',realExtensionLoaded:true,workerApiRequests:true,noExecutionTab:true,relationshipReadback:true,relationshipReads,popupManagement:true,popupDraftRecovery:true,blockRequests,pageErrors:errors,unexpectedRemoteRequests:remoteRequests},null,2));
   }catch(error){console.error(JSON.stringify({errors,toast:await page.locator('#toast').textContent().catch(()=>''),pages:await Promise.all(context.pages().map(async p=>({url:p.url(),text:(await p.locator('body').innerText()).slice(-500)})))},null,2));await page.screenshot({path:path.join(work,'integration-failure.png'),fullPage:true});throw error;}finally{await context.close();}
 });

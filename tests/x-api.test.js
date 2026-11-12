@@ -97,7 +97,7 @@ test('account switch or logout after a submitted write never reports success', a
 });
 
 test('HTTP 200 errors, wrong identity, missing relationship and non-boolean relationship cannot count as success', async () => {
-  for (const body of [{errors: [{code: 326}]}, {id_str: TARGET, blocking: true, errors: []},
+  for (const body of [{errors: [{code: 9999}]}, {id_str: TARGET, blocking: true, errors: []},
     {id_str: TARGET, blocking: true, error: 'failed'}, {id_str: '123', blocking: true},
     {id_str: Number(TARGET), blocking: true}, {id_str: TARGET}, {id_str: TARGET, blocking: 1},
     {id_str: TARGET, blocking: false}, null, []]) {
@@ -195,4 +195,203 @@ test('request rejection is distinct from HTTP success without a valid result', a
   await expectError(rejected.adapter.blockUser(TARGET, options), {kind: 'request', status: 404, uncertain: false});
   const noResult = fixture({fetchImpl: () => new Response(null, {status: 204})});
   await expectError(noResult.adapter.blockUser(TARGET, options), {kind: 'response', status: 204, uncertain: true});
+});
+
+test('account verification reads authenticated settings before resolving and matching the session ID', async () => {
+  const f = fixture({fetchImpl: url => url.endsWith('/account/settings.json')
+    ? json({screen_name: 'Owner_User'}) : json({id_str: ACCOUNT, screen_name: 'OWNER_USER'})});
+  assert.deepEqual(await f.adapter.verifyAccount(), {accountId: ACCOUNT, handle: 'owner_user'});
+  assert.deepEqual(f.calls.map(([url]) => url), [
+    'https://x.com/i/api/1.1/account/settings.json',
+    'https://x.com/i/api/1.1/users/show.json?screen_name=owner_user'
+  ]);
+  assert.equal(f.sessionCalls(), 4);
+  for (const [, init] of f.calls) {assert.equal(init.method, 'GET');assert.equal(init.body, undefined);assert.equal(init.credentials, 'include');}
+});
+
+test('account verification cannot replace server identity with a cookie-ID lookup or mismatched handle', async () => {
+  for (const [settings, profile, kind, count] of [
+    [{id_str: ACCOUNT}, {id_str: ACCOUNT, screen_name: 'owner'}, 'response', 1],
+    [{screen_name: '@owner'}, {id_str: ACCOUNT, screen_name: 'owner'}, 'response', 1],
+    [{screen_name: 'owner'}, {id_str: TARGET, screen_name: 'owner'}, 'account_changed', 2],
+    [{screen_name: 'owner'}, {id_str: ACCOUNT, screen_name: 'other'}, 'response', 2],
+    [{screen_name: 'owner'}, {id_str: Number(ACCOUNT), screen_name: 'owner'}, 'response', 2],
+    [{screen_name: 'owner'}, {id_str: ACCOUNT, screen_name: 'owner', suspended: true}, 'auth', 2]
+  ]) {
+    const f = fixture({fetchImpl: url => json(url.endsWith('/account/settings.json') ? settings : profile)});
+    await expectError(f.adapter.verifyAccount(), {kind, uncertain: false});assert.equal(f.calls.length, count);
+  }
+  const f = fixture();
+  await expectError(f.adapter.verifyAccount({expectedAccountId: TARGET}), {kind: 'account_changed', uncertain: false});assert.equal(f.calls.length, 0);
+});
+
+test('account changes between either verification request fail closed without writes', async () => {
+  for (const changeAt of [2, 3, 4]) {
+    const f = fixture({getSession: count => count >= changeAt ? {...SESSION, accountId: TARGET} : SESSION,
+      fetchImpl: url => json(url.endsWith('/account/settings.json') ? {screen_name: 'owner'} : {screen_name: 'owner', id_str: ACCOUNT})});
+    await expectError(f.adapter.verifyAccount(), {kind: 'account_changed', uncertain: false});
+    assert.equal(f.calls.length, changeAt === 4 ? 2 : 1);assert.ok(f.calls.every(([, init]) => init.method === 'GET'));
+  }
+});
+
+test('handle resolution is read-only, exact after case normalization, and returns only validated identity', async () => {
+  const f = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'TaRgEt_UsEr', description: AUTH, blocking: false})});
+  assert.deepEqual(await f.adapter.resolveUser('@TARGET_USER', options), {accountId: ACCOUNT, targetId: TARGET, handle: 'target_user'});
+  assert.equal(f.calls.length, 1);assert.equal(f.calls[0][0], 'https://x.com/i/api/1.1/users/show.json?screen_name=target_user');
+  assert.equal(f.calls[0][1].method, 'GET');assert.equal(f.calls[0][1].body, undefined);
+  const self = fixture({fetchImpl: () => json({id_str: ACCOUNT, screen_name: 'owner'})});
+  assert.equal((await self.adapter.resolveUser('owner', options)).targetId, ACCOUNT);
+});
+
+test('resolver rejects query injection, precision loss and mismatched response handles', async () => {
+  const invalid = fixture();
+  for (const handle of [123, '', '@@target', 'target&user_id=42', '../target', 'x'.repeat(16), 'https://x.com/target']) {
+    await expectError(invalid.adapter.resolveUser(handle, options), {kind: 'validation', uncertain: false});
+  }
+  await expectError(invalid.adapter.resolveUser('target'), {kind: 'validation', uncertain: false});assert.equal(invalid.calls.length, 0);
+  for (const body of [{id_str: TARGET, screen_name: 'renamed'}, {id_str: Number(TARGET), screen_name: 'target'},
+    {id_str: '0', screen_name: 'target'}, {id: TARGET, screen_name: 'target'}, {id_str: TARGET, screen_name: '@target'}]) {
+    const f = fixture({fetchImpl: () => json(body)});
+    await expectError(f.adapter.resolveUser('target', options), {kind: 'response', uncertain: false});assert.equal(f.calls.length, 1);
+  }
+});
+
+test('legacy target codes classify suspension and unavailability without claiming deletion', async () => {
+  for (const method of ['resolveUser', 'readRelationship', 'blockUser']) {
+    for (const [code, status, kind] of [[50, 404, 'target_unavailable'], [63, 403, 'target_suspended'], [64, 403, 'auth'], [89, 401, 'auth'], [326, 403, 'auth']]) {
+      const f = fixture({fetchImpl: () => json({errors: [{code, message: `${AUTH} ${CSRF}`}]}, status)});
+      await expectError(f.adapter[method](method === 'resolveUser' ? 'target' : TARGET, options), {kind, code, status, uncertain: false});
+      assert.equal(f.calls.length, 1);assert.equal(f.sessionCalls(), 2);
+    }
+  }
+  for (const flag of ['suspended', 'deactivated', 'deactivated_bit']) {
+    const f = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'target', [flag]: true})});
+    await expectError(f.adapter.resolveUser('target', options), {kind: flag === 'suspended' ? 'target_suspended' : 'target_unavailable', uncertain: false});
+    await expectError(f.adapter.readRelationship(TARGET, options), {kind: flag === 'suspended' ? 'target_suspended' : 'target_unavailable', uncertain: false});
+    await expectError(f.adapter.blockUser(TARGET, options), {kind: flag === 'suspended' ? 'target_suspended' : 'target_unavailable', uncertain: true});
+  }
+  const own = fixture({fetchImpl: () => json({errors: [{code: 63}]}, 403)});
+  await expectError(own.adapter.verifyAccount(), {kind: 'auth', code: 63, uncertain: false});
+});
+
+test('HTTP auth rate and server status take priority over conflicting target error codes', async () => {
+  for (const [status, kind, uncertain] of [[401, 'auth', false], [429, 'rate_limit', false], [503, 'server', true]]) {
+    const f = fixture({fetchImpl: () => json({errors: [{code: 63}]}, status)});
+    await expectError(f.adapter.blockUser(TARGET, options), {status, kind, uncertain});
+  }
+  const generic = fixture({fetchImpl: () => json({errors: [{code: '63'}]}, 403)});
+  await expectError(generic.adapter.blockUser(TARGET, options), {kind: 'auth', code: null, uncertain: false});
+});
+
+test('coded HTTP 200 errors remain unverified writes even when the error category is recognized', async () => {
+  for (const [code, kind] of [[88, 'rate_limit'], [326, 'auth'], [63, 'target_suspended'], [50, 'target_unavailable']]) {
+    const f = fixture({fetchImpl: () => json({errors: [{code, message: AUTH}]})});
+    await expectError(f.adapter.blockUser(TARGET, options), {kind, code, status: 200, uncertain: true});
+  }
+  const timestamp = 1700000000000;
+  const f = fixture({now: () => timestamp, fetchImpl: () => json({errors: [{code: 88}]}, 400, {'retry-after': '10'})});
+  await expectError(f.adapter.resolveUser('target', options), {kind: 'rate_limit', code: 88, retryAt: timestamp + 10000, uncertain: false});
+});
+
+test('verification shares one deadline across both reads and cannot issue a late follow-up', async () => {
+  let release;
+  const f = fixture({timeoutMs: 10, fetchImpl: () => new Promise(resolve => {release = resolve;})});
+  await expectError(f.adapter.verifyAccount(), {kind: 'timeout', uncertain: false});
+  release(json({screen_name: 'owner'}));await new Promise(resolve => setImmediate(resolve));assert.equal(f.calls.length, 1);
+});
+
+test('the write guard runs after session validation and before the sole POST', async () => {
+  const order = [];
+  const f = fixture({getSession: () => {order.push('session');return SESSION;}, fetchImpl: () => {order.push('post');return json({id_str: TARGET, blocking: true});}});
+  const result = await f.adapter.blockUser(TARGET, {...options, beforeWrite: async () => {order.push('guard');assert.equal(f.calls.length, 0);}});
+  assert.equal(result.blocking, true);assert.deepEqual(order, ['session', 'guard', 'session', 'post', 'session']);assert.equal(f.calls.length, 1);
+});
+
+test('guard rejection, a paused guard and account changes during the guard cannot submit a write', async () => {
+  for (const beforeWrite of [async () => {throw new Error(`${AUTH} ${CSRF}`);}, async () => false]) {
+    const f = fixture();await expectError(f.adapter.blockUser(TARGET, {...options, beforeWrite}), {kind: 'cancelled', uncertain: false});assert.equal(f.calls.length, 0);
+  }
+  const switched = fixture({getSession: count => count === 1 ? SESSION : {...SESSION, accountId: TARGET}});
+  await expectError(switched.adapter.blockUser(TARGET, {...options, beforeWrite: async () => {}}), {kind: 'account_changed', uncertain: false});assert.equal(switched.calls.length, 0);
+  const invalid = fixture();await expectError(invalid.adapter.blockUser(TARGET, {...options, beforeWrite: true}), {kind: 'validation', uncertain: false});assert.equal(invalid.calls.length, 0);
+});
+
+test('timed-out write guards cannot cause late POSTs and reads never invoke write guards', async () => {
+  let release;
+  const f = fixture({timeoutMs: 10});
+  await expectError(f.adapter.blockUser(TARGET, {...options, beforeWrite: () => new Promise(resolve => {release = resolve;})}), {kind: 'timeout', uncertain: false});
+  release();await new Promise(resolve => setImmediate(resolve));assert.equal(f.calls.length, 0);
+  let guards = 0;
+  const read = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'target', blocking: false})});
+  await read.adapter.readRelationship(TARGET, {...options, beforeWrite: () => {guards++;}});
+  await read.adapter.resolveUser('target', {...options, beforeWrite: () => {guards++;}});
+  assert.equal(guards, 0);assert.ok(read.calls.every(([, init]) => init.method === 'GET'));
+});
+
+test('the final dispatch guard follows the last session await and reserves no duplicate budget', async () => {
+  const order = [];
+  let reservations = 0, dispatchGuards = 0;
+  const f = fixture({getSession: () => {order.push('session');return SESSION;},
+    fetchImpl: () => {order.push('post');return json({id_str: TARGET, blocking: true});}});
+  const result = await f.adapter.blockUser(TARGET, {...options,
+    beforeWrite: async () => {reservations++;order.push('reserve');},
+    beforeDispatch: async () => {dispatchGuards++;order.push('dispatch-guard');assert.equal(f.calls.length, 0);}});
+  assert.equal(result.blocking, true);
+  assert.deepEqual(order, ['session', 'reserve', 'session', 'dispatch-guard', 'post', 'session']);
+  assert.equal(reservations, 1);assert.equal(dispatchGuards, 1);assert.equal(f.calls.length, 1);
+});
+
+test('pausing or removing the target during the second session await prevents the POST', async () => {
+  for (const mode of ['pause', 'remove']) {
+    const state = {paused: false, approved: true};
+    let reservations = 0, dispatchGuards = 0;
+    const f = fixture({getSession: async count => {
+      if (count === 2) {
+        await Promise.resolve();
+        if (mode === 'pause') state.paused = true;
+        else state.approved = false;
+      }
+      return SESSION;
+    }});
+    await expectError(f.adapter.blockUser(TARGET, {...options,
+      beforeWrite: async () => {reservations++;},
+      beforeDispatch: async () => {
+        dispatchGuards++;
+        if (state.paused || !state.approved) throw new Error(`${AUTH} ${CSRF}`);
+      }}), {kind: 'cancelled', uncertain: false});
+    assert.equal(reservations, 1, mode);assert.equal(dispatchGuards, 1, mode);assert.equal(f.calls.length, 0, mode);
+  }
+});
+
+test('dispatch guard rejection or false results cannot send or disclose guard errors', async () => {
+  for (const beforeDispatch of [async () => false, async () => {throw new Error(`${AUTH} ${CSRF}`);}]) {
+    const f = fixture();
+    await expectError(f.adapter.blockUser(TARGET, {...options, beforeDispatch}), {kind: 'cancelled', uncertain: false});
+    assert.equal(f.calls.length, 0);
+  }
+  const invalid = fixture();
+  await expectError(invalid.adapter.blockUser(TARGET, {...options, beforeDispatch: true}), {kind: 'validation', uncertain: false});
+  assert.equal(invalid.calls.length, 0);assert.equal(invalid.sessionCalls(), 0);
+});
+
+test('a timed-out dispatch guard cannot produce a late POST or reserve budget twice', async () => {
+  let release, reservations = 0;
+  const f = fixture({timeoutMs: 10});
+  await expectError(f.adapter.blockUser(TARGET, {...options,
+    beforeWrite: async () => {reservations++;},
+    beforeDispatch: () => new Promise(resolve => {release = resolve;})}), {kind: 'timeout', uncertain: false});
+  release();await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.length, 0);assert.equal(reservations, 1);
+});
+
+test('reads never invoke dispatch guards and a changed session is rejected before the guard', async () => {
+  let dispatchGuards = 0;
+  const callback = () => {dispatchGuards++;};
+  const read = fixture({fetchImpl: () => json({id_str: TARGET, screen_name: 'target', blocking: false})});
+  await read.adapter.readRelationship(TARGET, {...options, beforeDispatch: callback});
+  await read.adapter.resolveUser('target', {...options, beforeDispatch: callback});
+  assert.equal(dispatchGuards, 0);
+  const switched = fixture({getSession: count => count === 1 ? SESSION : {...SESSION, accountId: TARGET}});
+  await expectError(switched.adapter.blockUser(TARGET, {...options, beforeWrite: async () => {}, beforeDispatch: callback}), {kind: 'account_changed', uncertain: false});
+  assert.equal(dispatchGuards, 0);assert.equal(switched.calls.length, 0);
 });

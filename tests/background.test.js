@@ -1,9 +1,29 @@
-import test from 'node:test';
+import test, {after} from 'node:test';
 import assert from 'node:assert/strict';
 import {initialState} from '../extension/lib/core.js';
 import {STATE_BUDGET,stateBytes} from '../extension/lib/storage-budget.js';
 
-let storage={state:initialState()}, session={}, listener, alarmListener, startupListener, alarms=new Map();
+const RealDate=Date;let clock=RealDate.now();
+globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}};
+after(()=>{globalThis.Date=RealDate;});
+const ACCOUNT='9007199254740993',OTHER_ACCOUNT='9007199254740997',TARGET='9007199254740995',CSRF='a'.repeat(64);
+let storage={state:initialState()},session={},listener,alarmListener,startupListener,cookieListener,alarms=new Map();
+let cookieAccount=ACCOUNT,cookieCSRF=CSRF,cookieHook=null,cookieReads=[],requests=[],tabCalls=[],fetchHook=null,blocked=new Set(),serial=0;
+const serverHandles=new Map([[ACCOUNT,'owner'],[OTHER_ACCOUNT,'other_owner']]);
+const json=(value,status=200,headers={})=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});
+const originalFetch=globalThis.fetch;after(()=>{globalThis.fetch=originalFetch;});
+async function fakeFetch(url,init={}) {
+  const call={url:String(url),method:init.method||'GET',body:init.body,init};requests.push(call);
+  if(fetchHook){const response=await fetchHook(call);if(response!==undefined)return response;}
+  const parsed=new URL(call.url);assert.equal(parsed.origin,'https://x.com');assert.equal(init.credentials,'include');assert.equal(init.redirect,'error');
+  if(parsed.pathname.endsWith('/account/settings.json'))return json({screen_name:serverHandles.get(cookieAccount)});
+  if(parsed.pathname.endsWith('/users/show.json')&&parsed.searchParams.has('screen_name')){const handle=parsed.searchParams.get('screen_name');return json({id_str:[...serverHandles].find(([,name])=>name===handle)?.[0],screen_name:handle});}
+  if(parsed.pathname.endsWith('/users/show.json')){const id=parsed.searchParams.get('user_id');return json({id_str:id,blocking:blocked.has(`${cookieAccount}:${id}`)});}
+  if(parsed.pathname.endsWith('/blocks/create.json')){assert.equal(call.method,'POST');const body=new URLSearchParams(call.body);assert.deepEqual([...body.keys()],['user_id']);const id=body.get('user_id');assert.match(id,/^[1-9]\d{0,24}$/);blocked.add(`${cookieAccount}:${id}`);return json({id_str:id,blocking:true});}
+  throw new Error('Unexpected fixture endpoint');
+}
+globalThis.fetch=fakeFetch;
+const unexpectedTab=method=>async()=>{tabCalls.push(method);throw new Error('Unexpected browser operation in API execution');};
 storage.state.workerTabId=99;storage.state.runId='old-run';storage.state.paused=false;
 storage.state.queue=[{id:'interrupted',handle:'target',accountHandle:'owner',status:'running',updatedAt:new Date().toISOString()}];
 const extensionId='fixture';
@@ -12,11 +32,18 @@ globalThis.chrome={
   storage:{local:{get:async()=>structuredClone(storage),set:async value=>{storage=structuredClone(value);}},session:{get:async()=>structuredClone(session),set:async value=>{session={...session,...value};}}},
   alarms:{get:async name=>alarms.get(name),create:async(name,value)=>alarms.set(name,value),onAlarm:{addListener:fn=>alarmListener=fn}},
   permissions:{contains:async()=>true},
-  tabs:{onRemoved:{addListener(){}},query:async()=>[{id:1,url:'https://x.com/home',active:true,windowId:1}],get:async id=>({id,url:'https://x.com/home',active:true,windowId:1}),sendMessage:async()=>({ok:true,accountHandle:'owner'}),create:async()=>{throw new Error('Unexpected browser operation in unit test');}},
-  scripting:{executeScript:async()=>{throw new Error('Unexpected injection in unit test');},insertCSS:async()=>{throw new Error('Unexpected CSS injection in unit test');}}
+  cookies:{onChanged:{addListener:fn=>cookieListener=fn},get:async args=>{assert.equal(args.url,'https://x.com/i/api/1.1/');assert.ok(['twid','ct0'].includes(args.name));cookieReads.push(args.name);if(cookieHook)await cookieHook(args,cookieReads.length);const value=args.name==='twid'?(cookieAccount?`u%3D${cookieAccount}`:null):cookieCSRF;return value?{name:args.name,value,domain:'.x.com',secure:true,path:'/',storeId:'0'}:null;}},
+  tabs:{query:unexpectedTab('query'),get:unexpectedTab('get'),sendMessage:unexpectedTab('sendMessage'),create:unexpectedTab('create'),update:unexpectedTab('update'),reload:unexpectedTab('reload')}
 };
 await import('../extension/background.js');
 const send=(message,sender={id:extensionId,url:'chrome-extension://fixture/options.html',tab:{id:8}})=>new Promise(resolve=>listener(message,sender,resolve));
+const entry=(handle='target',id=TARGET)=>({handle,...(id?{id}:{}),source:'local',status:'approved',reason:'',evidence:[]});
+function reset({bound=false,entries=[]}={}){clock+=60000;storage={state:initialState()};storage.state.entries=entries;cookieAccount=ACCOUNT;cookieCSRF=CSRF;cookieHook=null;cookieReads=[];requests=[];tabCalls=[];fetchHook=null;blocked=new Set();globalThis.fetch=fakeFetch;if(bound)Object.assign(storage.state.settings,{accountId:ACCOUNT,accountHandle:'owner',sessionInvalid:false});}
+async function until(predicate){for(let i=0;i<300;i++){if(predicate()){await new Promise(resolve=>setImmediate(resolve));return;}await new Promise(resolve=>setTimeout(resolve,1));}assert.ok(predicate(),'Fixture operation did not settle');}
+async function runQueue(){const result=await send({type:'START_QUEUE'});assert.equal(result.ok,true,result.error);await until(()=>!storage.state.queue.some(job=>job.status==='running')&&(storage.state.queue.some(job=>['done','failed','uncertain','skipped','needs_id'].includes(job.status))||storage.state.apiCooldown));return storage.state;}
+const posts=()=>requests.filter(call=>call.method==='POST');
+const apiPaths=()=>requests.map(call=>new URL(call.url).pathname.replace('/i/api/1.1/',''));
+async function reloadWorker(){await import(`../extension/background.js?api-test-${++serial}`);await send({type:'GET_STATE'});}
 
 test('new browser session discards stale tab ownership and pauses interrupted writes',async()=>{
   const result=await send({type:'GET_STATE'});
@@ -26,7 +53,7 @@ test('new browser session discards stale tab ownership and pauses interrupted wr
 });
 
 test('background enforces message authority and binds identity',async()=>{
-  let result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true);assert.equal(result.state.settings.accountHandle,'owner');
+  let result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true,result.error);assert.equal(result.state.settings.accountHandle,'owner');assert.equal(result.state.settings.accountId,ACCOUNT);assert.deepEqual(apiPaths(),['account/settings.json','users/show.json']);assert.deepEqual(tabCalls,[]);
   result=await send({type:'IMPORT',text:'@example'},{id:extensionId,url:'https://x.com/home',tab:{id:1}});assert.equal(result.ok,false);assert.equal(storage.state.entries.length,0);
   result=await send({type:'GET_STATE'},{id:'other',url:'chrome-extension://fixture/options.html'});assert.equal(result.ok,false);
 });
@@ -58,7 +85,7 @@ test('capture progress rejects wrong session and tab',async()=>{
 });
 
 test('ID enrichment, explicit correction and retry refresh the queued identity',async()=>{
-  storage={state:initialState()};storage.state.settings.accountHandle='owner';
+  reset({bound:true});
   await send({type:'IMPORT',text:'@target'});await send({type:'REVIEW',handles:['target'],status:'approved'});await send({type:'QUEUE_APPROVED'});
   let result=await send({type:'IMPORT',text:JSON.stringify([{handle:'target',id:'111'}])});
   assert.equal(result.updated,1);assert.equal(result.state.queue[0].userId,'111');
@@ -90,10 +117,10 @@ test('watchdog marks stale in-flight work uncertain instead of repeating it',asy
   assert.equal(storage.state.queue[0].status,'uncertain');assert.equal(storage.state.paused,true);
 });
 
-test('worker suspension keeps same-session tab ownership; restart replaces it',async()=>{
-  storage={state:initialState()};storage.state.workerTabId=44;
+test('worker suspension preserves durable API limits and restart clears obsolete tab ownership',async()=>{
+  storage={state:initialState()};storage.state.workerTabId=44;storage.state.apiCooldown={kind:'rate_limit',until:clock+60000};
   await import('../extension/background.js?same-session');
-  assert.equal((await send({type:'GET_STATE'})).state.workerTabId,44);
+  assert.equal((await send({type:'GET_STATE'})).state.apiCooldown.until,clock+60000);
   session={};await import('../extension/background.js?next-session');
   assert.equal((await send({type:'GET_STATE'})).state.workerTabId,null);
   alarms.clear();startupListener();await new Promise(resolve=>setTimeout(resolve,0));assert.ok(alarms.has('gab-sync'));assert.ok(alarms.has('gab-watchdog'));assert.ok(alarms.has('gab-queue'));
@@ -113,136 +140,153 @@ test('oversized legacy state remains paused, exportable and recoverable after up
   result=await send({type:'REMOVE_ENTRIES',handles:['legacy']});assert.equal(result.ok,true);assert.equal(result.state.entries.length,0);assert.equal(session.gabRecovery,false);assert.equal(result.state.paused,true);
 });
 
-async function exerciseOperation(mode) {
-  storage={state:initialState()};storage.state.settings.accountHandle='owner';
-  storage.state.entries=[{handle:'target',source:'local',status:'approved',reason:'',evidence:[]}];
-  const original={...chrome.tabs}, calls=[];let tab;
-  chrome.tabs.create=async args=>(tab={id:101,url:args.url,status:'complete'});
-  chrome.tabs.update=async(id,args)=>(tab={...tab,...args});chrome.tabs.get=async()=>tab;
-  chrome.tabs.reload=async()=>{calls.push('reload');};
-  chrome.tabs.sendMessage=async(id,message)=>{
-    calls.push(message.type);
-    if(message.type==='GAB_PROBE'){
-      if(mode==='paused')storage.state.paused=true;
-      return {ok:true,id:'777'};
-    }
-    if(message.type==='GAB_BLOCK'){
-      assert.equal(storage.state.queue[0].userId,'777','ID must be durable before the first click');
-      assert.equal(storage.state.entries[0].id,'777');
-      if(mode==='lost-reply')throw new Error('Fixture lost reply after native click');
-      return {ok:true,id:'777',alreadyBlocked:false};
-    }
-    if(message.type==='GAB_VERIFY')return {ok:false,error:'Fixture result vanished after reload',uncertain:true};
-    throw new Error('Unexpected fixture message');
-  };
-  try {
-    assert.equal((await send({type:'START_QUEUE'})).ok,true);
-    for(let i=0;i<200;i++){
-      if(storage.state.queue[0]&&['failed','uncertain','done'].includes(storage.state.queue[0].status))break;
-      await new Promise(resolve=>setTimeout(resolve,25));
-    }
-    assert.equal(storage.state.queue[0].status,'uncertain');assert.equal(storage.state.paused,true);
-    assert.deepEqual(storage.state.nativeBlocked,{});
-    if(mode==='paused')assert.deepEqual(calls,['GAB_PROBE']);
-    else {assert.equal(storage.state.queue[0].userId,'777');assert.equal(calls.filter(type=>type==='GAB_BLOCK').length,1);}
-    if(mode==='reload-failed')assert.deepEqual(calls,['GAB_PROBE','GAB_BLOCK','reload','GAB_VERIFY']);
-  }finally{Object.assign(chrome.tabs,original);}
-}
-test('first observed ID is durable even when the block reply is lost',async()=>exerciseOperation('lost-reply'));
-test('pausing during target probe prevents any native block message',async()=>exerciseOperation('paused'));
-test('an optimistic block response cannot mark done when reload verification fails',async()=>exerciseOperation('reload-failed'));
+test('production API queue performs one numeric POST and independent readback without tab operations',async()=>{
+  reset({entries:[entry()]});assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);
+  fetchHook=async call=>{if(call.method==='POST'){assert.equal(storage.state.apiBudget.writes.length,1);assert.ok(storage.state.queue[0].writeAttemptAt);}return undefined;};
+  await runQueue();assert.equal(storage.state.queue[0].status,'done');assert.equal(storage.state.queue[0].accountId,ACCOUNT);assert.equal(posts().length,1);
+  assert.deepEqual(apiPaths(),['account/settings.json','users/show.json','users/show.json','blocks/create.json','users/show.json']);assert.deepEqual(tabCalls,[]);
+  assert.ok(storage.state.nativeBlocked[`id:${ACCOUNT}`][`id:${TARGET}`]);assert.equal(JSON.stringify(storage).includes(CSRF),false);
+});
 
-async function connectionFixture(run) {
-  const originalTabs={...chrome.tabs},originalScripting={...chrome.scripting};
-  storage={state:initialState()};storage.state.settings.accountHandle='previous';storage.state.settings.autoBlock=true;storage.state.paused=false;
-  const tabs=new Map([
-    [10,{id:10,url:'https://x.com/home',windowId:1,active:true,lastAccessed:1}],
-    [11,{id:11,url:'https://x.com/target',windowId:1,active:false,lastAccessed:100}],
-    [20,{id:20,url:'https://twitter.com/home',windowId:2,active:true,lastAccessed:999}]
-  ]),calls=[],injections=[],css=[],queries=[];
-  chrome.tabs.query=async query=>{queries.push(query);assert.equal(query.currentWindow,true);return [...tabs.values()].filter(tab=>tab.windowId===1);};
-  chrome.tabs.get=async id=>{if(!tabs.has(id))throw new Error('No tab with that ID');return {...tabs.get(id)};};
-  chrome.tabs.sendMessage=async(id,message,options)=>{calls.push({id,message,options});assert.deepEqual(options,{frameId:0});return {ok:true,accountHandle:`account_${id}`};};
-  chrome.scripting.executeScript=async args=>{injections.push(args);return [{frameId:0}];};
-  chrome.scripting.insertCSS=async args=>{css.push(args);};
-  try{await run({tabs,calls,injections,css,queries});}
-  finally{Object.assign(chrome.tabs,originalTabs);Object.assign(chrome.scripting,originalScripting);}
-}
-async function until(predicate) {
-  for(let i=0;i<100;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,1));}
-  assert.ok(predicate(),'Fixture operation did not settle');
-}
+test('missing numeric IDs become needs_id without any network request',async()=>{
+  reset({bound:true,entries:[entry('unknown',null)]});await runQueue();assert.equal(storage.state.queue[0].status,'needs_id');assert.equal(requests.length,0);assert.deepEqual(tabCalls,[]);await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);
+});
 
-test('connection fixes the popup tab and default selection stays in the current window',async()=>connectionFixture(async({calls,queries,tabs})=>{
-  let result=await send({type:'BIND_ACCOUNT',tabId:11});
-  assert.equal(result.ok,true);assert.equal(result.state.settings.accountHandle,'account_11');assert.equal(queries.length,0);assert.equal(calls[0].id,11);
-  result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true);assert.equal(calls.at(-1).id,10);assert.equal(result.state.lastConnection.tabId,10);
-  tabs.delete(10);tabs.delete(11);const before=calls.length;
-  result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,false);assert.match(result.error,/this window/);assert.equal(calls.length,before);assert.equal(storage.state.settings.accountHandle,'account_10');
-}));
+test('known blocks require no POST and history follows execution ID rather than account handle',async()=>{
+  reset({bound:true,entries:[entry()]});blocked.add(`${ACCOUNT}:${TARGET}`);await runQueue();assert.equal(posts().length,0);assert.equal(storage.state.queue[0].status,'done');
+  storage.state.settings.accountHandle='renamed_owner';await send({type:'QUEUE_APPROVED'});assert.equal(storage.state.queue.length,1);
+  cookieAccount=OTHER_ACCOUNT;clock+=60000;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);await runQueue();assert.equal(posts().length,1);assert.ok(storage.state.nativeBlocked[`id:${ACCOUNT}`][`id:${TARGET}`]);assert.ok(storage.state.nativeBlocked[`id:${OTHER_ACCOUNT}`][`id:${TARGET}`]);
+});
 
-test('invalid explicit connection tabs never fall back to another X account',async()=>connectionFixture(async({tabs,calls,queries,injections})=>{
-  tabs.set(30,{id:30,url:'https://x.com/home',incognito:true});
-  tabs.set(31,{id:31,url:'http://x.com/home'});tabs.set(32,{id:32,url:'https://x.com.evil.invalid/home'});
-  tabs.set(33,{id:33,url:'https://example.com/'});tabs.set(34,{id:34,url:'https://x.com/home'});storage.state.workerTabId=34;
-  for(const tabId of [-1,'10',null,404,30,31,32,33,34]) {
-    const result=await send({type:'BIND_ACCOUNT',tabId});assert.equal(result.ok,false);assert.equal(storage.state.settings.accountHandle,'previous');assert.equal(storage.state.lastConnection.status,'failed');
+test('429 cooldown survives restart and START RETRY BIND or automatic mode cannot bypass it',async()=>{
+  reset({bound:true,entries:[entry()]});let limited=true;fetchHook=async()=>limited?json({errors:[{code:88}]},429,{'retry-after':'60','x-rate-limit-reset':String((clock+120000)/1000)}):undefined;
+  await runQueue();assert.equal(storage.state.queue[0].status,'pending');const deadline=storage.state.apiCooldown.until;assert.equal(deadline,clock+120000);const count=requests.length;
+  await reloadWorker();assert.equal(storage.state.apiCooldown.until,deadline);await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,count);
+  for(const message of [{type:'START_QUEUE'},{type:'RETRY_FAILED'},{type:'BIND_ACCOUNT'},{type:'SAVE_SETTINGS',settings:{autoBlock:true}}])assert.equal((await send(message)).ok,false);
+  assert.equal(requests.length,count);limited=false;clock=deadline+1;await alarmListener({name:'gab-watchdog'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);
+});
+
+test('401 requires a new server-verified binding before retrying',async()=>{
+  reset({bound:true,entries:[entry()]});fetchHook=async()=>json({errors:[{code:89}]},401);await runQueue();assert.equal(storage.state.queue[0].status,'failed');assert.equal(storage.state.settings.sessionInvalid,true);assert.equal(storage.state.paused,true);assert.equal(posts().length,0);
+  clock+=61000;assert.equal((await send({type:'START_QUEUE'})).ok,false);assert.equal((await send({type:'RETRY_FAILED'})).ok,false);fetchHook=null;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.equal((await send({type:'RETRY_FAILED'})).ok,true);await runQueue();assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);
+});
+
+test('lost POST response remains uncertain and retry reads the relationship without repeating the write',async()=>{
+  reset({bound:true,entries:[entry()]});fetchHook=async call=>{if(call.method==='POST'){blocked.add(`${ACCOUNT}:${TARGET}`);throw new Error('Fixture reply lost after server write');}return undefined;};
+  await runQueue();assert.equal(storage.state.queue[0].status,'uncertain');assert.equal(posts().length,1);assert.equal(storage.state.apiBudget.writes.length,1);assert.deepEqual(storage.state.nativeBlocked,{});await alarmListener({name:'gab-watchdog'});assert.equal(posts().length,1);
+  clock+=61000;fetchHook=null;assert.equal((await send({type:'RETRY_FAILED'})).ok,true);await runQueue();assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);assert.equal(requests.at(-1).method,'GET');
+});
+
+test('post-write 429 and false readbacks are uncertain rather than confirmed success or retryable writes',async()=>{
+  for(const mode of ['rate','false']){reset({bound:true,entries:[entry()]});let wrote=false;fetchHook=async call=>{if(call.method==='POST'){wrote=true;return undefined;}if(wrote)return mode==='rate'?json({errors:[{code:88}]},429,{'retry-after':'90'}):json({id_str:TARGET,blocking:false});return undefined;};
+    await runQueue();assert.equal(storage.state.queue[0].status,'uncertain');assert.equal(storage.state.paused,true);assert.equal(posts().length,1);assert.deepEqual(storage.state.nativeBlocked,{});if(mode==='rate')assert.equal(storage.state.apiCooldown.until,clock+90000);
   }
-  assert.equal(calls.length,0);assert.equal(queries.length,0);assert.equal(injections.length,0);assert.equal(storage.state.paused,true);assert.equal(storage.state.settings.autoBlock,false);
-}));
+});
 
-test('missing identity receiver is restored exactly once in the main isolated frame',async()=>connectionFixture(async({injections,css})=>{
-  let attempts=0;
-  chrome.tabs.sendMessage=async(id,message,options)=>{assert.equal(id,10);assert.deepEqual(options,{frameId:0});assert.equal(message.type,'GAB_IDENTITY');if(++attempts===1)throw new Error('Could not establish connection. Receiving end does not exist.');return {ok:true,accountHandle:'restored'};};
-  const result=await send({type:'BIND_ACCOUNT',tabId:10});assert.equal(result.ok,true);assert.equal(attempts,2);
-  assert.deepEqual(injections,[{target:{tabId:10,frameIds:[0]},world:'ISOLATED',files:['content.js']}]);
-  assert.deepEqual(css,[{target:{tabId:10,frameIds:[0]},files:['content.css']}]);assert.equal(storage.state.lastConnection.status,'connected');
-}));
+test('pause allowlist and revoked approval during write preflight each cancel the POST',async()=>{
+  for(const message of [{type:'PAUSE_QUEUE'},{type:'ALLOW',handle:'target',enabled:true},{type:'REVIEW',handles:['target'],status:'pending'}]){
+    reset({bound:true,entries:[entry()]});let guarded=false;cookieHook=async(_args,count)=>{if(count===9){guarded=true;assert.equal((await send(message)).ok,true);}};
+    await runQueue();assert.equal(guarded,true);assert.equal(posts().length,0);assert.equal(storage.state.apiBudget.writes.length,0);assert.equal(storage.state.paused,true);assert.equal(storage.state.queue[0].status,'failed');
+  }
+});
 
-test('identity ambiguity and lost-response errors neither inject nor select another tab',async()=>connectionFixture(async({injections,queries})=>{
-  let attempts=0;
-  chrome.tabs.sendMessage=async id=>{attempts++;assert.equal(id,10);return {ok:false,error:'Fixture account is ambiguous'};};
-  let result=await send({type:'BIND_ACCOUNT',tabId:10});assert.equal(result.ok,false);assert.equal(storage.state.lastConnection.error,'Fixture account is ambiguous');
-  chrome.tabs.sendMessage=async()=>{attempts++;throw new Error('The message port closed before a response was received.');};
-  result=await send({type:'BIND_ACCOUNT',tabId:10});assert.equal(result.ok,false);assert.equal(attempts,2);assert.equal(injections.length,0);assert.equal(queries.length,0);assert.equal(storage.state.settings.accountHandle,'previous');
-}));
+test('in-flight ID edits are rejected without changing the numeric POST identity',async()=>{
+  reset({bound:true,entries:[entry()]});let edit;cookieHook=async(_args,count)=>{if(count===9)edit=await send({type:'EDIT_ENTRY',handle:'target',id:'123',reason:'Changed',evidence:[]});};
+  await runQueue();assert.equal(edit.ok,false);assert.equal(storage.state.entries[0].id,TARGET);assert.equal(posts()[0].body,`user_id=${TARGET}`);assert.equal(storage.state.queue[0].status,'done');
+});
 
-test('identity recovery revalidates navigation and stops after one failed injection attempt',async()=>connectionFixture(async({tabs,injections,css})=>{
-  chrome.tabs.sendMessage=async()=>{tabs.get(10).url='https://example.com/';throw new Error('Receiving end does not exist.');};
-  let result=await send({type:'BIND_ACCOUNT',tabId:10});assert.equal(result.ok,false);assert.equal(injections.length,0);
-  tabs.get(10).url='https://x.com/home';let attempts=0;
-  chrome.tabs.sendMessage=async()=>{attempts++;throw new Error('Receiving end does not exist.');};
-  result=await send({type:'BIND_ACCOUNT',tabId:10});assert.equal(result.ok,false);assert.equal(attempts,2);assert.equal(injections.length,1);assert.equal(css.length,1);assert.equal(storage.state.lastConnection.status,'failed');assert.equal(storage.state.settings.accountHandle,'previous');
-}));
+test('pause or eligibility revocation during the final session read still prevents dispatch',async()=>{
+  for(const message of [{type:'PAUSE_QUEUE'},{type:'ALLOW',handle:'target',enabled:true},{type:'REVIEW',handles:['target'],status:'pending'}]){
+    reset({bound:true,entries:[entry()]});let interrupted=false;
+    cookieHook=async(_args,count)=>{if(count===13){interrupted=true;assert.equal(storage.state.apiBudget.writes.length,1);assert.equal((await send(message)).ok,true);}};
+    await runQueue();assert.equal(interrupted,true);assert.equal(posts().length,0);assert.equal(storage.state.queue[0].status,'failed');assert.equal(storage.state.paused,true);
+    assert.equal(storage.state.apiBudget.writes.length,1,'A reserved attempt remains counted conservatively after cancellation');
+  }
+});
 
-test('closing the popup does not cancel a persisted connection outcome',async()=>connectionFixture(async()=>{
-  let resolveIdentity;
-  chrome.tabs.sendMessage=async()=>new Promise(resolve=>{resolveIdentity=resolve;});
-  const sender={id:extensionId,url:'chrome-extension://fixture/popup.html'};
-  assert.equal(listener({type:'BIND_ACCOUNT',tabId:10},sender,()=>{throw new Error('Fixture popup is gone');}),true);
-  await until(()=>resolveIdentity);assert.equal(storage.state.lastConnection.status,'connecting');assert.equal(storage.state.settings.accountHandle,'previous');assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);
-  resolveIdentity({ok:true,accountHandle:'completed'});await until(()=>storage.state.lastConnection.status==='connected');
-  let reopened=await send({type:'GET_STATE'});assert.equal(reopened.state.settings.accountHandle,'completed');
-  resolveIdentity=null;listener({type:'BIND_ACCOUNT',tabId:10},sender,()=>{});await until(()=>resolveIdentity);
-  resolveIdentity({ok:false,error:'Fixture could not identify account'});await until(()=>storage.state.lastConnection.status==='failed');
-  reopened=await send({type:'GET_STATE'});assert.equal(reopened.state.lastConnection.error,'Fixture could not identify account');assert.equal(reopened.state.settings.accountHandle,'completed');
-}));
+test('unavailable or suspended target errors skip only that target with no write',async()=>{
+  for(const [code,status] of [[50,404],[63,403]]){reset({bound:true,entries:[entry()]});fetchHook=async()=>json({errors:[{code}]},status);await runQueue();assert.equal(storage.state.queue[0].status,'skipped');assert.equal(posts().length,0);assert.equal(storage.state.settings.sessionInvalid,false);}
+});
 
-test('the latest connection request wins even if an older identity reply arrives last',async()=>connectionFixture(async()=>{
-  let resolveFirst;
-  chrome.tabs.sendMessage=async id=>id===10?new Promise(resolve=>{resolveFirst=resolve;}):{ok:true,accountHandle:'latest'};
-  const first=send({type:'BIND_ACCOUNT',tabId:10});await until(()=>resolveFirst);const firstId=storage.state.lastConnection.requestId;
-  const latest=await send({type:'BIND_ACCOUNT',tabId:20});assert.equal(latest.ok,true);const latestId=storage.state.lastConnection.requestId;assert.notEqual(firstId,latestId);
-  resolveFirst({ok:true,accountHandle:'stale'});const stale=await first;assert.equal(stale.ok,false);assert.match(stale.error,/newer connection/);
-  assert.equal(storage.state.settings.accountHandle,'latest');assert.equal(storage.state.lastConnection.requestId,latestId);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.logs.some(log=>log.handle==='stale'),false);
-}));
+test('closed popup connection outcomes remain readable after response delivery is lost',async()=>{
+  reset();let release;fetchHook=async call=>call.url.endsWith('/account/settings.json')?new Promise(resolve=>{release=resolve;}):undefined;const sender={id:extensionId,url:'chrome-extension://fixture/popup.html'};
+  assert.equal(listener({type:'BIND_ACCOUNT'},sender,()=>{throw new Error('Fixture popup closed');}),true);await until(()=>release);assert.equal(storage.state.lastConnection.status,'connecting');release(json({screen_name:'owner'}));await until(()=>storage.state.lastConnection.status==='connected');assert.equal((await send({type:'GET_STATE'})).state.settings.accountId,ACCOUNT);
+  release=null;listener({type:'BIND_ACCOUNT'},sender,()=>{});await until(()=>release);release(json({errors:[{code:89}]},401));await until(()=>storage.state.lastConnection.status==='failed');const state=(await send({type:'GET_STATE'})).state;assert.equal(state.settings.accountId,ACCOUNT);assert.equal(state.settings.sessionInvalid,true);assert.ok(state.lastConnection.error);
+});
 
-test('connection refuses an in-flight block before changing state or reading another identity',async()=>connectionFixture(async({calls})=>{
-  storage.state.queue=[{id:'active',handle:'target',status:'running',accountHandle:'previous'}];const before=structuredClone(storage.state);
-  const result=await send({type:'BIND_ACCOUNT',tabId:10});assert.equal(result.ok,false);assert.deepEqual(storage.state,before);assert.equal(calls.length,0);
-}));
+test('a stale account verification cannot overwrite the latest connection outcome',async()=>{
+  reset();let release,settingsCalls=0;fetchHook=async call=>{if(call.url.endsWith('/account/settings.json')&&++settingsCalls===1)return new Promise(resolve=>{release=resolve;});return undefined;};
+  const first=send({type:'BIND_ACCOUNT'});await until(()=>release);const firstId=storage.state.lastConnection.requestId;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);const latestId=storage.state.lastConnection.requestId;assert.notEqual(firstId,latestId);release(json({screen_name:'owner'}));assert.equal((await first).ok,false);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.lastConnection.requestId,latestId);
+});
 
-test('blocked-list capture only selects a blocked settings tab in the current window',async()=>connectionFixture(async({tabs,calls})=>{
-  tabs.get(20).url='https://x.com/settings/blocked/all';
-  const result=await send({type:'CAPTURE'});assert.equal(result.ok,false);assert.match(result.error,/this window/);assert.equal(calls.length,0);
-}));
+test('legacy handle-only bindings cannot automatically execute after migration',async()=>{
+  reset({entries:[entry()]});delete storage.state.executorVersion;storage.state.version=1;Object.assign(storage.state.settings,{accountHandle:'owner',autoBlock:true});delete storage.state.settings.accountId;storage.state.paused=false;storage.state.queue=[{id:'legacy',handle:'target',accountHandle:'owner',userId:TARGET,status:'pending'}];await reloadWorker();
+  const state=(await send({type:'GET_STATE'})).state;assert.equal(state.settings.accountId,'');assert.equal(state.settings.sessionInvalid,true);assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);assert.equal(state.queue[0].status,'skipped');assert.equal((await send({type:'START_QUEUE'})).ok,false);await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);
+});
+
+test('same-session migration immediately preserves a running legacy write as uncertain',async()=>{
+  reset({bound:true,entries:[entry()]});assert.ok(session.gabSession);delete storage.state.executorVersion;storage.state.version=1;storage.state.paused=false;storage.state.runId='legacy-run';storage.state.workerTabId=77;
+  storage.state.queue=[{id:'legacy-running',handle:'target',accountHandle:'owner',userId:TARGET,status:'running',updatedAt:new Date().toISOString()}];
+  await reloadWorker();const state=(await send({type:'GET_STATE'})).state;
+  assert.equal(state.queue[0].status,'uncertain');assert.equal(state.queue[0].userId,TARGET);assert.equal(state.runId,null);assert.equal(state.workerTabId,null);assert.equal(state.paused,true);assert.equal(state.settings.accountId,'');assert.equal(state.settings.sessionInvalid,true);assert.equal(requests.length,0);
+  assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true,'An immediately retired legacy operation must not falsely keep the new connection busy');assert.equal(storage.state.queue[0].status,'uncertain');assert.equal(posts().length,0);
+});
+
+test('account or missing-session cookie changes invalidate execution without network access',async()=>{
+  reset({bound:true});storage.state.settings.autoBlock=true;storage.state.paused=false;cookieAccount=OTHER_ACCOUNT;cookieListener({cookie:{name:'twid',domain:'.x.com'}});await until(()=>storage.state.settings.sessionInvalid);assert.equal(storage.state.paused,true);assert.equal(storage.state.settings.autoBlock,false);assert.equal(requests.length,0);
+  reset({bound:true});cookieCSRF=null;cookieListener({cookie:{name:'ct0',domain:'x.com'}});await until(()=>storage.state.settings.sessionInvalid);assert.equal(requests.length,0);
+  reset({bound:true});cookieAccount=OTHER_ACCOUNT;cookieListener({cookie:{name:'twid',domain:'example.com'}});await new Promise(resolve=>setImmediate(resolve));assert.equal(storage.state.settings.sessionInvalid,false);
+});
+
+test('write budgets persist across reconnect restart and account switching',async()=>{
+  reset({bound:true,entries:[entry()]});await runQueue();const firstWrite=storage.state.apiBudget.writes[0];await reloadWorker();assert.equal(storage.state.apiBudget.writes[0],firstWrite);assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.deepEqual(storage.state.apiBudget.writes,[firstWrite]);cookieAccount=OTHER_ACCOUNT;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.deepEqual(storage.state.apiBudget.writes,[]);cookieAccount=ACCOUNT;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.deepEqual(storage.state.apiBudget.writes,[firstWrite]);
+});
+
+test('local write cap and batch pause remain durable and prevent unbounded writes',async()=>{
+  reset({bound:true,entries:[entry()]});storage.state.apiBudget={accountId:ACCOUNT,writes:Array.from({length:30},(_,i)=>clock-1000+i)};await runQueue();assert.equal(requests.length,0);assert.equal(storage.state.apiCooldown.kind,'budget');const deadline=storage.state.apiCooldown.until;await reloadWorker();assert.equal(storage.state.apiCooldown.until,deadline);assert.equal((await send({type:'BIND_ACCOUNT'})).ok,false);assert.equal((await send({type:'START_QUEUE'})).ok,false);
+  reset({bound:true,entries:[entry()]});storage.state.apiBudget={accountId:ACCOUNT,writes:Array.from({length:9},(_,i)=>clock-1000+i)};await runQueue();assert.equal(storage.state.queue[0].status,'done');assert.equal(storage.state.apiBudget.writes.length,10);assert.equal(storage.state.apiCooldown.kind,'budget');assert.equal(storage.state.apiCooldown.until,clock+120000);
+});
+
+test('a replaced source identity cannot redirect an uncertain write readback to the new account',async()=>{
+  for(const outcome of ['blocked','not-blocked','error']){
+    reset({bound:true,entries:[{...entry('target','111'),source:'sub'}]});
+    storage.state.subscriptions=[{id:'sub',enabled:true,name:'Fixture',url:'https://raw.githubusercontent.com/o/r/main/list.json'}];
+    storage.state.queue=[{id:'old-write',handle:'target',userId:'111',accountId:ACCOUNT,accountHandle:'owner',status:'uncertain',error:'A prior response was lost',updatedAt:new Date().toISOString()}];
+    if(outcome==='blocked')blocked.add(`${ACCOUNT}:111`);
+    fetchHook=async call=>{
+      if(call.url.startsWith('https://raw.githubusercontent.com/'))return json({schema:'guga-blocklist/v1',entries:[{handle:'target',id:'222'}]});
+      if(outcome==='error')return json({},503);
+      return undefined;
+    };
+    assert.equal((await send({type:'SYNC'})).ok,true);assert.equal(storage.state.entries[0].id,'222');assert.equal(storage.state.queue[0].userId,'111');assert.equal(storage.state.queue[0].status,'uncertain');
+    assert.equal((await send({type:'RETRY_FAILED'})).ok,true);assert.equal(storage.state.queue[0].reconcileOnly,true);
+    assert.equal((await send({type:'START_QUEUE'})).ok,true);
+    const expected=outcome==='blocked'?'done':outcome==='not-blocked'?'skipped':'uncertain';
+    await until(()=>storage.state.queue.find(job=>job.id==='old-write')?.status===expected);
+    const original=storage.state.queue.find(job=>job.id==='old-write');assert.equal(original.userId,'111');assert.equal(original.accountId,ACCOUNT);
+    const apiRequests=requests.filter(call=>call.url.startsWith('https://x.com/'));assert.equal(apiRequests.length,1);assert.equal(new URL(apiRequests[0].url).searchParams.get('user_id'),'111');assert.equal(apiRequests[0].method,'GET');assert.equal(posts().length,0);
+    assert.ok(storage.state.queue.some(job=>job.userId==='222'&&job.status==='pending'));
+    if(outcome==='blocked')assert.ok(storage.state.nativeBlocked[`id:${ACCOUNT}`]['id:111']);else assert.deepEqual(storage.state.nativeBlocked,{});
+    if(outcome==='error'){assert.equal(original.reconcileOnly,true);assert.equal(storage.state.paused,true);}
+  }
+});
+
+test('switching execution accounts leaves another account readback pending without pausing the new queue',async()=>{
+  reset({bound:true,entries:[entry('target','222')]});
+  storage.state.queue=[{id:'account-a-readback',handle:'target',userId:'111',accountId:ACCOUNT,accountHandle:'owner',status:'uncertain',error:'Prior response lost',updatedAt:new Date().toISOString()}];
+  assert.equal((await send({type:'RETRY_FAILED'})).ok,true);assert.equal(storage.state.queue[0].status,'pending');assert.equal(storage.state.queue[0].reconcileOnly,true);
+  cookieAccount=OTHER_ACCOUNT;assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);requests=[];
+  await runQueue();const original=storage.state.queue.find(job=>job.id==='account-a-readback'),current=storage.state.queue.find(job=>job.accountId===OTHER_ACCOUNT);
+  assert.equal(original.status,'pending');assert.equal(original.reconcileOnly,true);assert.equal(original.accountId,ACCOUNT);assert.equal(original.userId,'111');assert.equal(current.userId,'222');assert.equal(current.status,'done');assert.equal(storage.state.paused,false);
+  assert.equal(posts().length,1);assert.equal(posts()[0].body,'user_id=222');assert.deepEqual(requests.filter(call=>call.method==='GET').map(call=>new URL(call.url).searchParams.get('user_id')),['222','222']);assert.ok(storage.state.nativeBlocked[`id:${OTHER_ACCOUNT}`]['id:222']);assert.equal(storage.state.nativeBlocked[`id:${ACCOUNT}`],undefined);
+});
+
+test('missing cookie API keeps management available and rejects connection without sending requests',async()=>{
+  reset();const cookieAPI=chrome.cookies;
+  try {
+    delete chrome.cookies;await reloadWorker();
+    assert.equal((await send({type:'GET_STATE'})).ok,true);
+    const connected=await send({type:'BIND_ACCOUNT'});assert.equal(connected.ok,false);assert.equal(storage.state.lastConnection.status,'failed');
+    assert.equal(storage.state.settings.sessionInvalid,true);assert.equal(requests.length,0);
+  } finally {chrome.cookies=cookieAPI;await reloadWorker();}
+});

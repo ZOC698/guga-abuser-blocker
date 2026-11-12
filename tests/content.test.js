@@ -21,7 +21,7 @@ function initialState() {
   };
 }
 
-test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MODULE or install playwright to run browser fixtures.' }, async t => {
+test('X read-only page browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MODULE or install playwright to run browser fixtures.' }, async t => {
   const browser = await playwright.chromium.launch({ headless: true, ...(process.env.GAB_CHROMIUM_PATH ? { executablePath: process.env.GAB_CHROMIUM_PATH } : {}) });
   const pages = [];
   async function fixture({ path = '/target_user', state = initialState(), blocked = false, loadedMarker } = {}) {
@@ -35,10 +35,6 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
       window.__listenerRegistrations = 0;
       window.__clicks = [];
       window.__reports = [];
-      window.__guards = 0;
-      window.__mutateAt = 0;
-      window.__mode = '';
-      window.__afterConfirm = '';
       window.__switchAccount = account => {
         document.querySelector('[data-testid="AppTabBar_Profile_Link"]').setAttribute('href', `/${account}`);
         document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"] [data-testid^="UserAvatar-Container-"]').dataset.testid = `UserAvatar-Container-${account}`;
@@ -48,17 +44,6 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
           id: 'test-extension',
           onMessage: { addListener(listener) { window.__listenerRegistrations++; window.__listener = listener; } },
           async sendMessage(message) {
-            if (message.type === 'GET_STATE') {
-              window.__guards++;
-              if (window.__guards === window.__mutateAt) {
-                if (window.__mode === 'allow') window.__state.allowlist = ['target_user'];
-                if (window.__mode === 'allow-alias') window.__state.allowlist = ['old_target'];
-                if (window.__mode === 'remove') window.__state.entries = [];
-                if (window.__mode === 'pause') window.__state.paused = true;
-                if (window.__mode === 'switch-account') window.__switchAccount('other_owner');
-              }
-              return { ok: true, state: structuredClone(window.__state) };
-            }
             if (message.type === 'CAPTURE_PROGRESS') window.__reports.push(message);
             return { ok: true };
           }
@@ -68,38 +53,16 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
           onChanged: { addListener(listener) { window.__storageListener = listener; } }
         }
       };
-      window.__send = message => new Promise(resolve => window.__listener(message, { id: 'test-extension' }, resolve));
+      window.__send = message => new Promise(resolve => {
+        let responded = false;
+        const keepChannel = window.__listener(message, { id: 'test-extension' }, result => { responded = true; resolve(result); });
+        if (keepChannel !== true && !responded) resolve(undefined);
+      });
       window.__update = () => window.__storageListener({ state: { newValue: structuredClone(window.__state) } }, 'local');
       if (blocked) document.querySelector('#follow').dataset.testid = '1234567890123456789-unblock';
-      document.querySelector('[data-testid="userActions"]').addEventListener('click', () => {
-        window.__clicks.push('more');
-        const menu = document.createElement('div');
-        menu.setAttribute('role', 'menu');
-        const block = document.createElement('button');
-        block.dataset.testid = 'block';
-        block.textContent = 'Block @target_user';
-        block.addEventListener('click', () => {
-          window.__clicks.push('block');
-          menu.remove();
-          const dialog = document.createElement('div');
-          dialog.setAttribute('role', 'dialog');
-          dialog.append(document.createTextNode('Block @target_user?'));
-          const confirm = document.createElement('button');
-          confirm.dataset.testid = 'confirmationSheetConfirm';
-          confirm.textContent = 'Block';
-          confirm.addEventListener('click', () => {
-            window.__clicks.push('confirm');
-            document.querySelector('#follow').dataset.testid = '1234567890123456789-unblock';
-            if (window.__afterConfirm === 'id') document.querySelector('#follow').dataset.testid = '9999999999999999999-unblock';
-            if (window.__afterConfirm === 'pause') window.__state.paused = true;
-            if (window.__afterConfirm === 'remove') window.__state.entries = [];
-            dialog.remove();
-          });
-          dialog.append(confirm);
-          document.body.append(dialog);
-        });
-        menu.append(block);
-        document.body.append(menu);
+      document.addEventListener('click', event => {
+        const control = event.target.closest('[data-testid="userActions"],[data-testid="block"],[data-testid="confirmationSheetConfirm"],[data-testid$="-unblock"]');
+        if (control) window.__clicks.push(control.dataset.testid);
       });
     }, { state, blocked, loadedMarker });
     await page.addStyleTag({ content: css });
@@ -108,9 +71,30 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
   }
 
   try {
+    await t.test('removed DOM block, probe and verify messages have no response or click capability', async () => {
+      for (const blocked of [false, true]) {
+        const page = await fixture({ blocked });
+        await page.evaluate(() => {
+          const menu = document.createElement('div');
+          menu.setAttribute('role', 'menu');
+          menu.innerHTML = '<button data-testid="block">Block @target_user</button>';
+          const dialog = document.createElement('div');
+          dialog.setAttribute('role', 'dialog');
+          dialog.innerHTML = 'Block @target_user?<button data-testid="confirmationSheetConfirm">Block</button>';
+          document.body.append(menu, dialog);
+        });
+        for (const type of ['GAB_BLOCK', 'GAB_PROBE', 'GAB_VERIFY']) {
+          assert.equal(await page.evaluate(request => window.__send(request), { ...request, type, userId: '1234567890123456789' }), undefined, type);
+        }
+        assert.deepEqual(await page.evaluate(() => window.__clicks), []);
+        assert.deepEqual(await page.evaluate(() => window.__state), initialState());
+      }
+      assert.equal(/\b(?:nativeBlock|probeProfile|verifyBlock)\b|\.click\s*\(/.test(source), false);
+    });
+
     await t.test('an old loaded marker permits the update but the same version cannot register twice', async () => {
       const page = await fixture({ loadedMarker: true });
-      assert.equal(await page.evaluate(() => window.__gugaAbuserBlockerLoaded), '0.1.2');
+      assert.equal(await page.evaluate(() => window.__gugaAbuserBlockerLoaded), '0.2.0');
       assert.equal(await page.evaluate(() => window.__listenerRegistrations), 1);
       await page.addScriptTag({ content: source });
       assert.equal(await page.evaluate(() => window.__listenerRegistrations), 1);
@@ -162,8 +146,7 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
         const identity = await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' }));
         assert.equal(identity.ok, false, mode);
         const result = await page.evaluate(request => window.__send(request), request);
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, false, mode);
+        assert.equal(result, undefined, mode);
         assert.deepEqual(await page.evaluate(() => window.__clicks), [], mode);
       }
     });
@@ -212,210 +195,14 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
       assert.deepEqual(await page.evaluate(() => window.__clicks), []);
     });
 
-    await t.test('SPA account changes are read afresh and invalidate the old bound queue', async () => {
+    await t.test('SPA account changes are read afresh for capture identity', async () => {
       const page = await fixture();
       assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'owner_user' });
       await page.evaluate(() => window.__switchAccount('other_owner'));
       assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_IDENTITY' })), { ok: true, accountHandle: 'other_owner' });
       const result = await page.evaluate(request => window.__send(request), request);
-      assert.equal(result.ok, false);
-      assert.equal(result.uncertain, false);
+      assert.equal(result, undefined);
       assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-    });
-
-    await t.test('an SPA account switch before confirmation cancels the final click', async () => {
-      const page = await fixture();
-      await page.evaluate(() => { window.__mutateAt = 4; window.__mode = 'switch-account'; });
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.equal(result.ok, false);
-      assert.equal(result.uncertain, true);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block']);
-    });
-
-    await t.test('blocks exactly the verified profile and returns its numeric ID', async () => {
-      const page = await fixture();
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.deepEqual(result, { ok: true, alreadyBlocked: false, id: '1234567890123456789' });
-      assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block', 'confirm']);
-    });
-
-    await t.test('GAB_PROBE observes a handle-only target ID without clicking or mutating durable state', async () => {
-      const state = initialState();
-      delete state.entries[0].id;
-      const page = await fixture({ state });
-      const result = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_PROBE' });
-      assert.deepEqual(result, { ok: true, id: '1234567890123456789' });
-      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-      assert.deepEqual(await page.evaluate(() => window.__state), state);
-    });
-
-    await t.test('GAB_PROBE rejects wrong identity and invalid queue authorization without clicking', async () => {
-      for (const mode of ['id', 'account', 'pause', 'allow', 'run']) {
-        const page = await fixture();
-        await page.evaluate(mode => {
-          if (mode === 'id') document.querySelector('#follow').dataset.testid = '9999999999999999999-follow';
-          if (mode === 'account') window.__switchAccount('other_owner');
-          if (mode === 'pause') window.__state.paused = true;
-          if (mode === 'allow') window.__state.allowlist = ['target_user'];
-          if (mode === 'run') window.__state.runId = 'new-run';
-        }, mode);
-        const result = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_PROBE' });
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, false, mode);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), [], mode);
-      }
-    });
-
-    await t.test('already-blocked profiles are observed without toggling unblock', async () => {
-      const page = await fixture({ blocked: true });
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.equal(result.ok, true);
-      assert.equal(result.alreadyBlocked, true);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-    });
-
-    await t.test('paused jobs, switched accounts, and numeric ID mismatch never click', async () => {
-      for (const mode of ['pause', 'account', 'id']) {
-        const state = initialState();
-        if (mode === 'pause') state.paused = true;
-        if (mode === 'account') state.settings.accountHandle = 'other_owner';
-        if (mode === 'id') state.entries[0].id = '9999999999999999999';
-        const page = await fixture({ state });
-        const result = await page.evaluate(request => window.__send(request), request);
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, false, mode);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), [], mode);
-      }
-    });
-
-    await t.test('a handle-only entry still requires a visible unambiguous numeric ID before any click', async () => {
-      for (const mode of ['missing', 'ambiguous']) {
-        const state = initialState();
-        delete state.entries[0].id;
-        const page = await fixture({ state });
-        await page.evaluate(mode => {
-          if (mode === 'missing') document.querySelector('#follow').remove();
-          else {
-            const conflicting = document.createElement('button');
-            conflicting.dataset.testid = '9999999999999999999-follow';
-            conflicting.textContent = 'Follow';
-            document.querySelector('[data-testid="primaryColumn"]').append(conflicting);
-          }
-        }, mode);
-        const result = await page.evaluate(request => window.__send(request), request);
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, false, mode);
-        assert.match(result.error, /numeric ID/i, mode);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), [], mode);
-      }
-    });
-
-    await t.test('pins the initially observed ID even when the approved entry has no ID', async () => {
-      const state = initialState();
-      delete state.entries[0].id;
-      const page = await fixture({ state });
-      await page.evaluate(() => { window.__afterConfirm = 'id'; });
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.equal(result.ok, false);
-      assert.equal(result.uncertain, true);
-      assert.match(result.error, /numeric ID/i);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block', 'confirm']);
-    });
-
-    await t.test('a changed ID, pause, or removal after confirmation cannot report success', async () => {
-      for (const mode of ['id', 'pause', 'remove']) {
-        const page = await fixture();
-        await page.evaluate(mode => { window.__afterConfirm = mode; }, mode);
-        const result = await page.evaluate(request => window.__send(request), request);
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, true, mode);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block', 'confirm'], mode);
-      }
-    });
-
-    await t.test('a pre-existing unblock control with the wrong numeric ID cannot bypass identity checks', async () => {
-      const page = await fixture({ blocked: true });
-      await page.evaluate(() => { document.querySelector('#follow').dataset.testid = '9999999999999999999-unblock'; });
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.equal(result.ok, false);
-      assert.equal(result.uncertain, false);
-      assert.match(result.error, /numeric ID/i);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-    });
-
-    await t.test('GAB_VERIFY confirms a fresh blocked profile without clicking any control', async () => {
-      const page = await fixture({ blocked: true });
-      const result = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_VERIFY', userId: '1234567890123456789' });
-      assert.deepEqual(result, { ok: true, id: '1234567890123456789' });
-      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-    });
-
-    await t.test('GAB_VERIFY requires a string numeric ID pinned by the worker', async () => {
-      for (const userId of [undefined, 123, '', 'not-an-id']) {
-        const page = await fixture({ blocked: true });
-        const result = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_VERIFY', userId });
-        assert.equal(result.ok, false, String(userId));
-        assert.equal(result.uncertain, true, String(userId));
-        assert.match(result.error, /pinned numeric ID/i, String(userId));
-        assert.deepEqual(await page.evaluate(() => window.__clicks), [], String(userId));
-      }
-    });
-
-    await t.test('GAB_VERIFY rejects wrong profile IDs, switched accounts, and revoked queue authorization', async () => {
-      for (const mode of ['id', 'account', 'pause', 'allow', 'remove', 'run', 'job']) {
-        const page = await fixture({ blocked: true });
-        await page.evaluate(mode => {
-          if (mode === 'id') document.querySelector('#follow').dataset.testid = '9999999999999999999-unblock';
-          if (mode === 'account') window.__switchAccount('other_owner');
-          if (mode === 'pause') window.__state.paused = true;
-          if (mode === 'allow') window.__state.allowlist = ['target_user'];
-          if (mode === 'remove') window.__state.entries = [];
-          if (mode === 'run') window.__state.runId = 'new-run';
-          if (mode === 'job') window.__state.queue[0].status = 'cancelled';
-        }, mode);
-        const result = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_VERIFY', userId: '1234567890123456789' });
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, true, mode);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), [], mode);
-      }
-    });
-
-    await t.test('allowlisting, removal, or pausing before confirmation cancels the final click', async () => {
-      for (const mode of ['allow', 'remove', 'pause']) {
-        const page = await fixture();
-        await page.evaluate(mode => { window.__mutateAt = 4; window.__mode = mode; }, mode);
-        const result = await page.evaluate(request => window.__send(request), request);
-        assert.equal(result.ok, false, mode);
-        assert.equal(result.uncertain, true, mode);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block'], mode);
-      }
-    });
-
-    await t.test('allowlisting an alias of the same numeric account cancels an in-flight confirmation', async () => {
-      const state = initialState();
-      state.entries.push({ ...state.entries[0], handle: 'old_target' });
-      const page = await fixture({ state });
-      await page.evaluate(() => { window.__mutateAt = 4; window.__mode = 'allow-alias'; });
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.equal(result.ok, false);
-      assert.equal(result.uncertain, true);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block']);
-    });
-
-    await t.test('same-ID allowlist and own-account aliases reject handle-only targets before any click', async () => {
-      for (const mode of ['allow', 'own']) {
-        const state = initialState();
-        delete state.entries[0].id;
-        state.entries.push({ ...state.entries[0], handle: mode === 'allow' ? 'old_target' : 'owner_user', id: '1234567890123456789' });
-        if (mode === 'allow') state.allowlist = ['old_target'];
-        const page = await fixture({ state });
-        for (const type of ['GAB_PROBE', 'GAB_BLOCK']) {
-          const result = await page.evaluate(request => window.__send(request), { ...request, type });
-          assert.equal(result.ok, false, `${mode} ${type}`);
-          assert.equal(result.uncertain, false, `${mode} ${type}`);
-          assert.deepEqual(await page.evaluate(() => window.__clicks), [], `${mode} ${type}`);
-        }
-      }
     });
 
     await t.test('timeline filtering honors an exception for a same-ID account alias', async () => {
@@ -432,18 +219,32 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
       assert.equal(await page.locator('#exempt [data-testid="tweetText"]').isVisible(), true);
     });
 
+    await t.test('filtering honors numeric owner identity and known exceptions from pending aliases', async () => {
+      for (const mode of ['numeric-owner', 'pending-alias']) {
+        const state = initialState();
+        state.entries.push({ ...state.entries[0], handle: 'other_target', id: '222' });
+        if (mode === 'numeric-owner') {
+          state.settings.accountId = state.entries[0].id;
+          state.settings.accountHandle = '';
+        } else {
+          state.entries.push({ ...state.entries[0], handle: 'old_target', status: 'pending' });
+          state.allowlist = ['old_target'];
+        }
+        const page = await fixture({ path: '/home', state });
+        await page.evaluate(() => {
+          document.querySelector('main').innerHTML = '<article id="exempt" data-testid="tweet"><div data-testid="User-Name"><a href="/target_user">Exempt</a></div><div data-testid="tweetText">Keep visible</div></article><article id="control" data-testid="tweet"><div data-testid="User-Name"><a href="/other_target">Other</a></div><div data-testid="tweetText">Approved target</div></article>';
+        });
+        await page.waitForSelector('#control.gab-filtered');
+        assert.equal(await page.locator('#exempt').evaluate(element => element.classList.contains('gab-filtered')), false, mode);
+      }
+    });
+
     await t.test('an allowlist identity pin survives removal of the old alias from the list', async () => {
       const state = initialState();
       state.entries.push({ ...state.entries[0], handle: 'other_target', id: '222' });
       state.allowlist = ['old_target'];
       state.allowlistPins = { old_target: ['1234567890123456789'] };
       const page = await fixture({ state });
-      for (const type of ['GAB_PROBE', 'GAB_BLOCK']) {
-        const result = await page.evaluate(request => window.__send(request), { ...request, type });
-        assert.equal(result.ok, false, type);
-        assert.equal(result.uncertain, false, type);
-        assert.deepEqual(await page.evaluate(() => window.__clicks), [], type);
-      }
       await page.evaluate(() => {
         document.querySelector('main').innerHTML = '<article id="exempt" data-testid="tweet"><div data-testid="User-Name"><a href="/target_user">New alias</a></div><div data-testid="tweetText">Still exempt</div></article><article id="filtered" data-testid="tweet"><div data-testid="User-Name"><a href="/other_target">Other</a></div><div data-testid="tweetText">Approved target</div></article>';
       });
@@ -454,36 +255,18 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
 
     await t.test('removing an allowlisted handle disables its remaining identity pin', async () => {
       const state = initialState();
+      state.entries.push({ ...state.entries[0], handle: 'other_target', id: '222' });
       state.allowlist = ['old_target'];
       state.allowlistPins = { old_target: ['1234567890123456789'] };
       const page = await fixture({ state });
-      const before = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_PROBE' });
-      assert.equal(before.ok, false);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-      await page.evaluate(() => { window.__state.allowlist = []; window.__update(); });
-      const probe = await page.evaluate(request => window.__send(request), { ...request, type: 'GAB_PROBE' });
-      assert.deepEqual(probe, { ok: true, id: '1234567890123456789' });
-      const result = await page.evaluate(request => window.__send(request), request);
-      assert.deepEqual(result, { ok: true, alreadyBlocked: false, id: '1234567890123456789' });
-      assert.deepEqual(await page.evaluate(() => window.__clicks), ['more', 'block', 'confirm']);
-      assert.deepEqual(await page.evaluate(() => window.__state.allowlistPins), state.allowlistPins);
       await page.evaluate(() => {
-        document.querySelector('main').innerHTML = '<article id="target" data-testid="tweet"><div data-testid="User-Name"><a href="/target_user">Target</a></div><div data-testid="tweetText">Approved target</div></article>';
+        document.querySelector('main').innerHTML = '<article id="target" data-testid="tweet"><div data-testid="User-Name"><a href="/target_user">Target</a></div><div data-testid="tweetText">Approved target</div></article><article id="control" data-testid="tweet"><div data-testid="User-Name"><a href="/other_target">Other</a></div><div data-testid="tweetText">Another target</div></article>';
       });
+      await page.waitForSelector('#control.gab-filtered');
+      assert.equal(await page.locator('#target').evaluate(element => element.classList.contains('gab-filtered')), false);
+      await page.evaluate(() => { window.__state.allowlist = []; window.__update(); });
       await page.waitForSelector('#target.gab-filtered');
-    });
-
-    await t.test('conflicting IDs and disabled source cannot authorize a block', async () => {
-      const state = initialState();
-      state.entries.push({ ...state.entries[0], id: '222', source: 'sub-1' });
-      state.subscriptions.push({ id: 'sub-1', enabled: true });
-      let page = await fixture({ state });
-      assert.equal((await page.evaluate(request => window.__send(request), request)).ok, false);
-      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
-      state.entries = [state.entries[1]];
-      state.subscriptions[0].enabled = false;
-      page = await fixture({ state });
-      assert.equal((await page.evaluate(request => window.__send(request), request)).ok, false);
+      assert.deepEqual(await page.evaluate(() => window.__state.allowlistPins), state.allowlistPins);
       assert.deepEqual(await page.evaluate(() => window.__clicks), []);
     });
 
@@ -503,6 +286,17 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
       await page.waitForFunction(() => !document.querySelector('#bad').classList.contains('gab-filtered'));
       assert.equal(await page.locator('.gab-placeholder').count(), 0);
       assert.equal(await page.locator('#bad [data-testid="tweetText"]').isVisible(), true);
+    });
+
+    await t.test('reposts are filtered by the original author, not a name in social context', async () => {
+      const page = await fixture({ path: '/home' });
+      await page.evaluate(() => {
+        document.querySelector('main').innerHTML = '<article id="reposted-target" data-testid="tweet"><div data-testid="socialContext"><a href="/friend_user">Friend reposted</a></div><div data-testid="User-Name"><a href="/target_user">Original target</a></div><div data-testid="tweetText">Target original</div></article><article id="reposted-friend" data-testid="tweet"><div data-testid="socialContext"><a href="/target_user">Target reposted</a></div><div data-testid="User-Name"><a href="/friend_user">Original friend</a></div><div data-testid="tweetText">Friend original</div></article>';
+      });
+      await page.waitForSelector('#reposted-target.gab-filtered');
+      assert.equal(await page.locator('#reposted-friend').evaluate(element => element.classList.contains('gab-filtered')), false);
+      assert.equal(await page.locator('#reposted-friend [data-testid="tweetText"]').isVisible(), true);
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
     });
 
     await t.test('captures only unambiguous rendered cells with bound session and exact numeric IDs', async () => {
@@ -536,6 +330,27 @@ test('X DOM adapter browser fixtures', { skip: !playwright && 'Set PLAYWRIGHT_MO
       const result = await page.evaluate(() => window.__send({ type: 'GAB_CAPTURE', captureId: 'capture-2', accountHandle: 'other_owner', autoScroll: true }));
       assert.equal(result.ok, false);
       assert.deepEqual(await page.evaluate(() => window.__reports), []);
+    });
+
+    await t.test('capture can be stopped without clicking any native X action', async () => {
+      const page = await fixture({ path: '/settings/blocked/all' });
+      assert.equal((await page.evaluate(() => window.__send({ type: 'GAB_CAPTURE', captureId: 'capture-stop', accountHandle: 'owner_user', autoScroll: true }))).ok, true);
+      await page.waitForFunction(() => window.__reports.some(report => report.status === 'scanning'));
+      assert.deepEqual(await page.evaluate(() => window.__send({ type: 'GAB_STOP_CAPTURE' })), { ok: true });
+      await page.waitForFunction(() => window.__reports.some(report => report.status === 'stopped'));
+      assert.equal(await page.locator('#gab-capture-status').count(), 0);
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
+    });
+
+    await t.test('capture stops if an SPA update changes the signed-in account', async () => {
+      const page = await fixture({ path: '/settings/blocked/all' });
+      assert.equal((await page.evaluate(() => window.__send({ type: 'GAB_CAPTURE', captureId: 'capture-switch', accountHandle: 'owner_user', autoScroll: true }))).ok, true);
+      await page.waitForFunction(() => window.__reports.some(report => report.status === 'scanning'));
+      await page.evaluate(() => window.__switchAccount('other_owner'));
+      await page.waitForFunction(() => window.__reports.some(report => report.status === 'stopped'));
+      assert.match(await page.evaluate(() => window.__reports.at(-1).message), /account changed/i);
+      assert.equal(await page.locator('#gab-capture-status').count(), 0);
+      assert.deepEqual(await page.evaluate(() => window.__clicks), []);
     });
   } finally {
     await Promise.all(pages.map(page => page.close()));

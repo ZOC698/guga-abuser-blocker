@@ -3,6 +3,40 @@ import assert from 'node:assert/strict';
 import {initialState,normalizeHandle,parseImport,mergeLocal,publicDocument,effectiveEntries,enqueueApproved,reconcileQueue,retryFailed,identityKey,recordBlocked,retainAllowlistIdentities,subscriptionURL,csvExport,MAX_ENTRIES} from '../extension/lib/core.js';
 
 const entry=(handle,extra={})=>({handle,source:'local',status:'approved',reason:'',evidence:[],...extra});
+
+test('uncertain writes preserve their original actor and numeric target across list and account changes',()=>{
+  const s=initialState();s.settings.accountId='9001';s.settings.accountHandle='owner';s.entries=[entry('target',{id:'111'})];
+  enqueueApproved(s);const job=s.queue[0];job.status='uncertain';
+  s.entries[0].id='222';reconcileQueue(s);assert.equal(job.userId,'111');assert.equal(job.status,'uncertain');
+  s.settings.accountId='9002';reconcileQueue(s);assert.equal(job.accountId,'9001');assert.equal(job.status,'uncertain');
+  s.settings.accountId='9001';retryFailed(s);assert.equal(job.status,'pending');assert.equal(job.userId,'111');assert.equal(job.reconcileOnly,true);
+  enqueueApproved(s);assert.equal(job.userId,'111');assert.ok(s.queue.some(j=>j.userId==='222'&&j.id!==job.id));
+});
+
+test('API queues wait for numeric IDs and enrichment preserves the same job',()=>{
+  const s=initialState();s.settings.accountHandle='owner';s.settings.accountId='9001';s.entries=[entry('target')];
+  enqueueApproved(s);assert.equal(s.queue[0].status,'needs_id');assert.equal(s.queue[0].accountId,'9001');
+  const jobId=s.queue[0].id;
+  mergeLocal(s,parseImport('[{"handle":"target","id":"777"}]').entries);reconcileQueue(s);
+  assert.equal(s.queue[0].id,jobId);assert.equal(s.queue[0].status,'pending');assert.equal(s.queue[0].userId,'777');
+});
+
+test('numeric execution identity survives rename and does not inherit a reassigned handle history',()=>{
+  const s=initialState();s.settings.accountHandle='owner';s.settings.accountId='9001';s.entries=[entry('target',{id:'777'})];
+  enqueueApproved(s);s.queue[0].status='done';recordBlocked(s,s.queue[0],'777');
+  assert.ok(s.nativeBlocked['id:9001']['id:777']);
+  s.settings.accountHandle='renamed_owner';enqueueApproved(s);assert.equal(s.queue.length,1);
+  s.settings.accountHandle='owner';s.settings.accountId='9002';enqueueApproved(s);
+  assert.equal(s.queue.length,2);assert.equal(s.queue[1].accountId,'9002');assert.equal(s.queue[1].status,'pending');
+});
+
+test('legacy handle history cannot suppress a verified API account and own numeric aliases are excluded',()=>{
+  const s=initialState();s.settings.accountHandle='owner';s.settings.accountId='9001';
+  s.nativeBlocked.owner={'id:777':{handle:'target'}};
+  s.entries=[entry('self_alias',{id:'9001'}),entry('target',{id:'777'})];
+  enqueueApproved(s);assert.equal(s.queue.length,1);assert.equal(s.queue[0].handle,'target');
+  assert.equal(s.queue[0].status,'pending');
+});
 test('TXT handles are normalized and deduplicated, numeric IDs are not handles',()=>{
   const result=parseImport('\uFEFF@Example_A\r\n@example_a\nhttps://x.com/Example_B\n');
   assert.deepEqual(result.entries.map(e=>e.handle),['example_a','example_b']);assert.equal(result.duplicates,1);assert.equal(result.entries[0].status,'pending');
@@ -108,7 +142,7 @@ test('legacy handle-only history cannot suppress a newly pinned numeric target',
 });
 
 test('pending and failed identities refresh, but running jobs never silently change identity',()=>{
-  for(const status of ['pending','failed','uncertain']) {
+  for(const status of ['pending','failed']) {
     const s=initialState();s.settings.accountHandle='owner';s.entries=[entry('target',{id:'123'})];enqueueApproved(s);s.queue[0].status=status;
     s.entries=[entry('target',{id:'456'})];reconcileQueue(s);
     assert.equal(s.queue[0].userId,'456');assert.equal(s.queue[0].status,status);
