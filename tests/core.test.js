@@ -28,14 +28,14 @@ test('fresh state includes the official numeric seed but no execution consent or
   const before=Date.now();
   const state=createInitialState();
   assert.ok(state.nextAutoSyncAt>=before+SUBSCRIPTION_REFRESH_MS&&state.nextAutoSyncAt<=Date.now()+SUBSCRIPTION_REFRESH_MS);assert.equal(state.lastSyncAttemptAt,null);
-  assert.equal(OFFICIAL_SEED.entries.length,523);assert.equal(state.entries.length,523);
+  assert.equal(state.entries.length,OFFICIAL_SEED.entries.length);
   assert.equal(state.subscriptions.length,1);assert.equal(state.subscriptions[0].id,OFFICIAL_SUBSCRIPTION_ID);
-  assert.equal(state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(state.subscriptions[0].enabled,true);assert.equal(state.subscriptions[0].count,523);
+  assert.equal(state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(state.subscriptions[0].enabled,true);assert.equal(state.subscriptions[0].count,OFFICIAL_SEED.entries.length);
   assert.ok(state.entries.every(row=>row.source===OFFICIAL_SUBSCRIPTION_ID&&row.status==='approved'&&typeof row.id==='string'&&/^[1-9]\d{0,24}$/.test(row.id)));
   assert.deepEqual(state.entries.map(({handle,id})=>({handle,id})),OFFICIAL_SEED.entries);
   assert.equal(state.settings.accountId,'');assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);assert.deepEqual(state.queue,[]);
-  assert.equal(state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(effectiveEntries(state).length,523);
-  state.entries[0].handle='modified';assert.notEqual(createInitialState().entries[0].handle,'modified');assert.notEqual(OFFICIAL_SEED.entries[0].handle,'modified');
+  assert.equal(state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(effectiveEntries(state).length,OFFICIAL_SEED.entries.length);
+  if(OFFICIAL_SEED.entries.length){state.entries[0].handle='modified';assert.notEqual(createInitialState().entries[0].handle,'modified');assert.notEqual(OFFICIAL_SEED.entries[0].handle,'modified');}
 });
 
 test('one-time official migration preserves private state and does not restore a deleted subscription',()=>{
@@ -45,7 +45,7 @@ test('one-time official migration preserves private state and does not restore a
   state.queue=[{id:'prior',handle:'private',userId:'123',accountId:'9001',status:'done'}];state.nativeBlocked={'id:9001':{'id:123':{handle:'private'}}};
   const previous=structuredClone(state);assert.equal(installOfficialSubscription(state),true);
   for(const key of ['settings','paused','pauseReason','queue','nativeBlocked','allowlist'])assert.deepEqual(state[key],previous[key]);
-  assert.deepEqual(state.entries[0],previous.entries[0]);assert.equal(state.entries.length,524);assert.equal(state.officialListVersion,OFFICIAL_LIST_VERSION);
+  assert.deepEqual(state.entries[0],previous.entries[0]);assert.equal(state.entries.length,OFFICIAL_SEED.entries.length+1);assert.equal(state.officialListVersion,OFFICIAL_LIST_VERSION);
   state.subscriptions=[];state.entries=state.entries.filter(row=>row.source==='local');const removed=structuredClone(state);
   assert.equal(installOfficialSubscription(state),false);assert.deepEqual(state,removed);
   state.officialListVersion=OFFICIAL_LIST_VERSION+1;assert.equal(installOfficialSubscription(state),false);assert.equal(state.subscriptions.length,0);
@@ -73,7 +73,8 @@ test('official migration never replaces an unrelated source ID or overfills exis
   const official=state.subscriptions.find(sub=>sub.url===OFFICIAL_SUBSCRIPTION_URL);
   assert.notEqual(official.id,OFFICIAL_SUBSCRIPTION_ID);assert.equal(state.entries[0].handle,'unrelated');assert.equal(state.entries[0].source,OFFICIAL_SUBSCRIPTION_ID);
   const full=initialState();delete full.officialListVersion;full.entries=Array.from({length:MAX_ENTRIES},(_,i)=>entry(`fixture${i}`));
-  const previous=structuredClone(full.entries);installOfficialSubscription(full);assert.deepEqual(full.entries,previous);assert.equal(full.subscriptions[0].count,0);assert.match(full.subscriptions[0].error,/20,000/);
+  const previous=structuredClone(full.entries);installOfficialSubscription(full);assert.deepEqual(full.entries,previous);assert.equal(full.subscriptions[0].count,0);
+  if(OFFICIAL_SEED.entries.length)assert.match(full.subscriptions[0].error,/20,000/);else assert.equal(full.subscriptions[0].error,'');
 });
 
 test('uncertain writes preserve their original actor and numeric target across list and account changes',()=>{

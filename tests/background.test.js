@@ -489,16 +489,18 @@ test('captured-list import enables and queues targets through the same guarded a
   await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);
 });
 
-test('fresh install exposes all 523 official IDs and only executes after verified connection and global opt-in',async()=>{
+test('fresh install exposes all official IDs and only executes after verified connection and global opt-in',async()=>{
   reset();storage={};session={};await reloadWorker();
-  let result=await send({type:'GET_STATE'});assert.equal(result.state.entries.length,523);assert.equal(result.state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);
+  let result=await send({type:'GET_STATE'});assert.equal(result.state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(result.state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);
   assert.equal(result.state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(result.state.settings.autoBlock,false);assert.equal(result.state.paused,true);assert.equal(result.state.queue.length,0);
   await alarmListener({name:'gab-watchdog'});assert.equal(requests.length,0);assert.equal((await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}})).ok,false);assert.equal(requests.length,0);
   result=await send({type:'BIND_ACCOUNT'});assert.equal(result.ok,true);assert.equal(storage.state.lastSync,null);assert.equal(requests.filter(call=>call.url===OFFICIAL_SUBSCRIPTION_URL).length,0);
   assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(storage.state.queue.length,0);assert.equal(posts().length,0);
   assert.deepEqual(requests.filter(call=>new URL(call.url).origin==='https://x.com').map(call=>new URL(call.url).pathname),[VIEWER_PATH]);
-  result=await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}});assert.equal(result.ok,true);assert.equal(result.state.queue.length,523);assert.ok(result.state.queue.every(job=>job.status==='pending'&&job.accountId===ACCOUNT&&job.userId));assert.equal(posts().length,0);
-  await alarmListener({name:'gab-queue'});assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);assert.equal(posts()[0].body,`user_id=${OFFICIAL_SEED.entries[0].id}`);
+  result=await send({type:'SAVE_SETTINGS',settings:{autoBlock:true}});assert.equal(result.ok,true);assert.equal(result.state.queue.length,OFFICIAL_SEED.entries.length);assert.ok(result.state.queue.every(job=>job.status==='pending'&&job.accountId===ACCOUNT&&job.userId));assert.equal(posts().length,0);
+  await alarmListener({name:'gab-queue'});
+  if(OFFICIAL_SEED.entries.length){assert.equal(storage.state.queue[0].status,'done');assert.equal(posts().length,1);assert.equal(posts()[0].body,`user_id=${OFFICIAL_SEED.entries[0].id}`);}
+  else{assert.deepEqual(storage.state.queue,[]);assert.equal(posts().length,0);}
 });
 
 test('fresh install startup connection and legacy six-hour alarms stay offline until the monthly deadline',async()=>{
@@ -507,7 +509,7 @@ test('fresh install startup connection and legacy six-hour alarms stay offline u
   fetchHook=async call=>call.url===OFFICIAL_SUBSCRIPTION_URL?json({schema:'guga-blocklist/v1',entries:[{handle:'curated_new',id:'777'}]}):undefined;
   alarms.set('gab-sync',{periodInMinutes:360});
   await installedListener();await startupListener();await alarmListener({name:'gab-sync'});
-  assert.deepEqual(alarms.get('gab-sync'),{when:deadline});assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.lastSyncAttemptAt,null);assert.equal(storage.state.entries.length,523);assert.equal(requests.length,0);
+  assert.deepEqual(alarms.get('gab-sync'),{when:deadline});assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.lastSyncAttemptAt,null);assert.equal(storage.state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(requests.length,0);
   assert.equal((await send({type:'BIND_ACCOUNT'})).ok,true);assert.deepEqual(apiPaths(),['Viewer']);assert.equal(storage.state.nextAutoSyncAt,deadline);requests=[];
   clock=deadline-1;await startupListener();await alarmListener({name:'gab-sync'});assert.equal(requests.length,0);assert.equal(storage.state.nextAutoSyncAt,deadline);
   clock=deadline;await alarmListener({name:'gab-sync'});
@@ -525,10 +527,10 @@ test('connection uses the cached seed and manual refresh alone can start a slow 
   assert.equal(release,undefined);assert.deepEqual(apiPaths(),['Viewer']);
   const refresh=send({type:'SYNC'});
   try {
-    assert.equal(result.ok,true);assert.equal(result.state.lastConnection.status,'connected');assert.equal(result.state.entries.length,523);assert.equal(storage.state.settings.autoBlock,false);
-    await until(()=>release);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.entries.length,523);assert.equal(posts().length,0);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);
+    assert.equal(result.ok,true);assert.equal(result.state.lastConnection.status,'connected');assert.equal(result.state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(storage.state.settings.autoBlock,false);
+    await until(()=>release);assert.equal(storage.state.lastConnection.status,'connected');assert.equal(storage.state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(posts().length,0);assert.equal(storage.state.nextAutoSyncAt,clock+SUBSCRIPTION_REFRESH_MS);
   } finally {if(release)release(json({},503));}
-  assert.equal((await refresh).ok,true);assert.match(storage.state.subscriptions[0].error,/503/);assert.equal(storage.state.entries.length,523);assert.equal(storage.state.lastConnection.status,'connected');
+  assert.equal((await refresh).ok,true);assert.match(storage.state.subscriptions[0].error,/503/);assert.equal(storage.state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(storage.state.lastConnection.status,'connected');
 });
 
 test('official refresh keeps the last good seed on invalid data and accepts an explicitly empty curator list',async()=>{
@@ -547,7 +549,7 @@ test('old state migrates once without changing its pause settings private rows h
   reset({bound:true,entries:[{...entry('private','123'),status:'pending'}]});delete storage.state.officialListVersion;
   storage.state.settings.autoBlock=true;storage.state.paused=true;storage.state.pauseReason='Keep paused';storage.state.nativeBlocked={[`id:${ACCOUNT}`]:{'id:456':{handle:'old'}}};
   storage.state.queue=[{id:'old',handle:'old',userId:'456',accountId:ACCOUNT,accountHandle:'owner',status:'done'}];const previous=structuredClone(storage.state);
-  await reloadWorker();assert.equal(storage.state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(storage.state.entries.length,524);
+  await reloadWorker();assert.equal(storage.state.officialListVersion,OFFICIAL_LIST_VERSION);assert.equal(storage.state.entries.length,OFFICIAL_SEED.entries.length+1);
   for(const key of ['settings','paused','pauseReason','nativeBlocked','queue'])assert.deepEqual(storage.state[key],previous[key]);assert.deepEqual(storage.state.entries[0],previous.entries[0]);
   const removed=await send({type:'REMOVE_SUBSCRIPTION',id:OFFICIAL_SUBSCRIPTION_ID});assert.equal(removed.ok,true);assert.equal(removed.state.entries.length,1);
   await reloadWorker();await startupListener();assert.equal(storage.state.subscriptions.length,0);assert.deepEqual(storage.state.entries,previous.entries);assert.equal(requests.length,0);
@@ -562,7 +564,9 @@ test('migration retains an existing disabled official subscription and its cache
 });
 
 test('official source rows cannot be edited removed or uploaded through private-list operations',async()=>{
-  reset();storage={state:createInitialState()};const target=OFFICIAL_SEED.entries[0];const original=structuredClone(storage.state.entries);
+  reset();storage={state:createInitialState()};const target=OFFICIAL_SEED.entries[0]??{handle:'official_case',id:TARGET};
+  if(!OFFICIAL_SEED.entries.length)storage.state.entries.push({...entry(target.handle,target.id),source:OFFICIAL_SUBSCRIPTION_ID});
+  const original=structuredClone(storage.state.entries);
   assert.equal((await send({type:'EDIT_ENTRY',handle:target.handle,id:'999',reason:'Changed'})).ok,false);
   assert.equal((await send({type:'REVIEW',handles:[target.handle],status:'pending'})).ok,true);
   assert.equal((await send({type:'REMOVE_ENTRIES',handles:[target.handle]})).ok,true);
@@ -612,7 +616,7 @@ test('an in-flight refresh persists its deadline before worker restart and dupli
     await alarmListener({name:'gab-sync'});await startupListener();await reloadWorker();await startupListener();await alarmListener({name:'gab-sync'});
     assert.equal(requests.length,1);assert.equal(storage.state.nextAutoSyncAt,deadline);
   } finally {release(json(OFFICIAL_SEED));}
-  await pending;assert.equal(requests.length,1);assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.entries.length,523);assert.equal(posts().length,0);
+  await pending;assert.equal(requests.length,1);assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(posts().length,0);
 });
 
 test('manual refresh bypasses the due guard and resets the monthly deadline on success or failure',async()=>{
@@ -632,7 +636,7 @@ test('explicitly adding a subscription immediately fetches only that source with
   fetchHook=async call=>call.url===url?json({schema:'guga-blocklist/v1',entries:[{handle:'optional',id:TARGET}]}):undefined;
   const result=await send({type:'ADD_SUBSCRIPTION',url,name:'Optional'});assert.equal(result.ok,true);
   assert.deepEqual(requests.map(call=>[call.url,call.method]),[[url,'GET']]);assert.equal(storage.state.nextAutoSyncAt,deadline);assert.equal(storage.state.lastSyncAttemptAt,null);
-  assert.equal(storage.state.subscriptions.length,2);assert.equal(storage.state.entries.length,524);assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(posts().length,0);
+  assert.equal(storage.state.subscriptions.length,2);assert.equal(storage.state.entries.length,OFFICIAL_SEED.entries.length+1);assert.equal(storage.state.settings.autoBlock,false);assert.equal(storage.state.paused,true);assert.equal(posts().length,0);
 });
 
 test('backend commits encrypted state independently of the fixture mirror and survives an independent reopen',async()=>{

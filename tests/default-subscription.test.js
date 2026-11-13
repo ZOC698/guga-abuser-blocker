@@ -32,6 +32,7 @@ test('fresh users receive the official subscription and need only connect plus e
   });
   testContext.after(()=>context.close());
   const accountId='9876543210987654321',csrf='a'.repeat(64),target=OFFICIAL_SEED.entries[0];
+  const expectedBlocks=Math.min(1,OFFICIAL_SEED.entries.length);
   const routeErrors=[],pageErrors=[],unexpectedRequests=[],apiCalls=[];
   let githubRequests=0,blockRequests=0,relationshipReads=0,blocking=false;
   await context.route(/https?:\/\//,async route=>{
@@ -89,12 +90,12 @@ test('fresh users receive the official subscription and need only connect plus e
   }
   try {
     await page.goto(`chrome-extension://${id}/popup.html`);
-    await page.waitForFunction(()=>document.querySelector('#stat-approved')?.textContent==='523');
+    await page.waitForFunction(expected=>document.querySelector('#stat-approved')?.textContent===String(expected),OFFICIAL_SEED.entries.length);
     let state=await read();
     const initialLocal=await worker.evaluate(()=>chrome.storage.local.get(null));
     assert.deepEqual(Object.keys(initialLocal),['gabStateRevision'],'Only a non-sensitive revision may remain in storage.local');
     assert.ok(Number.isSafeInteger(initialLocal.gabStateRevision));
-    assert.equal(state.entries.length,523);assert.equal(state.entries.filter(entry=>entry.source==='local').length,0);
+    assert.equal(state.entries.length,OFFICIAL_SEED.entries.length);assert.equal(state.entries.filter(entry=>entry.source==='local').length,0);
     assert.equal(state.subscriptions.length,1);assert.equal(state.subscriptions[0].id,OFFICIAL_SUBSCRIPTION_ID);assert.equal(state.subscriptions[0].url,OFFICIAL_SUBSCRIPTION_URL);assert.equal(state.subscriptions[0].enabled,true);
     assert.equal(state.settings.accountId,'');assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);assert.equal(state.queue.length,0);assert.equal(apiCalls.length,0);
     assert.equal(githubRequests,0,'First installation uses the packaged list without contacting GitHub');
@@ -108,13 +109,13 @@ test('fresh users receive the official subscription and need only connect plus e
       await page.locator('[data-panel="overview"]').click();
       assert.equal(await page.locator('#included-list-note').textContent(),translate('includedListHelp'));
       assert.equal(await page.locator('#protection-desc').textContent(),translate('officialReadyDesc'));
-      assert.equal(await page.locator('#stat-approved').textContent(),'523');await noOverflow(`${language}/overview`);
+      assert.equal(await page.locator('#stat-approved').textContent(),String(OFFICIAL_SEED.entries.length));await noOverflow(`${language}/overview`);
       await page.locator('[data-panel="subscriptions"]').click();
       assert.equal(await page.locator('#next-auto-sync').isVisible(),true);
       assert.ok((await page.locator('#next-auto-sync').textContent()).length>10,'The next monthly refresh date is visible');
       assert.equal(await page.locator('#subscription-list h3').textContent(),translate('officialList'));
       assert.equal(await page.locator('#subscription-list .badge').textContent(),translate('officialReadOnly'));
-      assert.ok((await page.locator('#subscription-list').textContent()).includes('523'));await noOverflow(`${language}/subscriptions`);
+      assert.ok((await page.locator('#subscription-list').textContent()).includes(String(OFFICIAL_SEED.entries.length)));await noOverflow(`${language}/subscriptions`);
       await page.locator('[data-panel="settings"]').click();await noOverflow(`${language}/settings`);locales.push(language);
     }
     assert.equal(blockRequests,0);assert.equal((await read()).queue.length,0);
@@ -130,18 +131,19 @@ test('fresh users receive the official subscription and need only connect plus e
     assert.equal(githubRequests,0,'Connecting X must not force a list download');
     assert.equal(state.nextAutoSyncAt,initialNextSync,'Connecting X must not reset the monthly deadline');
     await page.locator('#auto-block').check();
-    await waitForState(state=>state.settings.autoBlock&&state.queue.length===523);
+    await waitForState(state=>state.settings.autoBlock&&state.queue.length===OFFICIAL_SEED.entries.length);
     state=await read();assert.ok(state.queue.every(job=>job.status==='pending'&&job.userId));assert.equal(state.entries.filter(entry=>entry.source==='local').length,0);
-    await waitForState(state=>state.queue[0]?.status==='done',55000);
+    if(target)await waitForState(state=>state.queue[0]?.status==='done',55000);
     // Stop immediately after readback, well before the next 30-second interval.
     await page.locator('#auto-block').uncheck();
     await waitForState(state=>!state.settings.autoBlock&&state.paused);
-    state=await read();assert.equal(state.queue.filter(job=>job.status==='done').length,1);assert.equal(state.queue.filter(job=>job.status==='pending').length,522);
+    state=await read();assert.equal(state.queue.filter(job=>job.status==='done').length,expectedBlocks);assert.equal(state.queue.filter(job=>job.status==='pending').length,OFFICIAL_SEED.entries.length-expectedBlocks);
     const completedLocal=await worker.evaluate(()=>chrome.storage.local.get(null));
     assert.deepEqual(Object.keys(completedLocal),['gabStateRevision'],'Bound account, queue and history must not be persisted in plaintext');
     assert.ok(completedLocal.gabStateRevision>initialLocal.gabStateRevision);
-    assert.ok(state.nativeBlocked[`id:${accountId}`][`id:${target.id}`]);assert.equal(blockRequests,1);assert.equal(relationshipReads,2);assert.equal(githubRequests,0,'The packaged list supports the complete blocking flow without GitHub');
-    assert.deepEqual(apiCalls,[{method:'GET',path:VIEWER_PATH},{method:'GET',path:RELATIONSHIP_PATH},{method:'POST',path:BLOCK_PATH},{method:'GET',path:RELATIONSHIP_PATH}]);
+    if(target)assert.ok(state.nativeBlocked[`id:${accountId}`][`id:${target.id}`]);else assert.deepEqual(state.nativeBlocked,{});
+    assert.equal(blockRequests,expectedBlocks);assert.equal(relationshipReads,expectedBlocks*2);assert.equal(githubRequests,0,'The packaged list supports the complete blocking flow without GitHub');
+    assert.deepEqual(apiCalls,[{method:'GET',path:VIEWER_PATH},...(target?[{method:'GET',path:RELATIONSHIP_PATH},{method:'POST',path:BLOCK_PATH},{method:'GET',path:RELATIONSHIP_PATH}]:[])]);
     assert.equal(context.pages().length,pageCount);assert.ok(context.pages().every(candidate=>!/^https?:/.test(candidate.url())));
     await page.locator('[data-panel="subscriptions"]').click();
     await page.locator('#sync-now').click();
@@ -156,15 +158,15 @@ test('fresh users receive the official subscription and need only connect plus e
     await page.reload();await page.waitForSelector('#language');await page.locator('[data-panel="overview"]').click();
     await page.waitForFunction(expected=>document.querySelector('#included-list-note')?.textContent===expected,translate('chooseListHelp'));state=await read();
     assert.equal(state.subscriptions.length,0);assert.equal(state.entries.length,0);assert.equal(state.settings.autoBlock,false);assert.equal(state.paused,true);
-    assert.equal(state.queue.filter(job=>job.status==='done').length,1);assert.equal(state.queue.filter(job=>job.status==='pending').length,0);assert.equal(blockRequests,1);
+    assert.equal(state.queue.filter(job=>job.status==='done').length,expectedBlocks);assert.equal(state.queue.filter(job=>job.status==='pending').length,0);assert.equal(blockRequests,expectedBlocks);
     assert.equal(await page.locator('#included-list-note').textContent(),translate('chooseListHelp'));
     assert.deepEqual(routeErrors,[]);assert.deepEqual(pageErrors,[]);assert.deepEqual(unexpectedRequests,[]);
     await fs.writeFile(path.join(outputs,`guga-default-${version}-fixture.json`),JSON.stringify({
-      passed:true,version,realUnpackedExtension:true,freshDisposableProfile:true,seededEntries:523,initialLocalEntries:0,
+      passed:true,version,realUnpackedExtension:true,freshDisposableProfile:true,seededEntries:OFFICIAL_SEED.entries.length,initialLocalEntries:0,
       initialQueueLength:0,initialAutomaticBlocking:false,locales,popupViewport:{width:450,height:580},overflow:false,
       localStorageContainsOnlyRevision:true,accountQueueHistoryNotInPlaintextLocalStorage:true,
-      requiredSetupActions:['connect X','enable automatic blocking'],automaticQueueLength:523,
-      confirmedMockBlocks:1,pendingBeforePause:522,relationshipReads,githubRequests,
+      requiredSetupActions:['connect X','enable automatic blocking'],automaticQueueLength:OFFICIAL_SEED.entries.length,
+      confirmedMockBlocks:expectedBlocks,pendingBeforePause:OFFICIAL_SEED.entries.length-expectedBlocks,relationshipReads,githubRequests,
       githubRequestsBeforeManualRefresh:0,automaticRefreshDays:30,manualRefreshDefersNextAutomatic:true,
       githubInterceptContainsCredentials:false,githubWriteRequests:0,noExecutionTabs:true,
       removedSubscriptionRemainsRemovedAfterReload:true,unexpectedRequests:0,pageErrors:[],

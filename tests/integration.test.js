@@ -79,7 +79,7 @@ test('real unpacked MV3 extension: import enabled by default, locales, export, a
     }
     await assertEncryptedStorage();
     const official=fresh.subscriptions.find(sub=>sub.url===OFFICIAL_SUBSCRIPTION_URL);
-    assert.ok(official?.enabled);assert.equal(fresh.entries.length,523);assert.equal(fresh.settings.autoBlock,false);assert.equal(blockRequests,0);
+    assert.ok(official?.enabled);assert.equal(fresh.entries.length,OFFICIAL_SEED.entries.length);assert.equal(fresh.settings.autoBlock,false);assert.equal(blockRequests,0);
     // This fixture exercises private import/removal independently. The separate
     // default-subscription fixture tests the two-action fresh-user workflow.
     assert.equal((await send('REMOVE_SUBSCRIPTION',{id:official.id})).ok,true);
